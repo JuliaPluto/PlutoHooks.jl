@@ -86,6 +86,15 @@ end
 # ╔═╡ 7cdd6ad5-d2e5-4a0d-80e3-810a8d475d0f
 @bind button Button()
 
+# ╔═╡ e473af39-d4f1-4a90-a6c2-15ec17bee632
+begin
+	clock; button;
+	pl, set_plot = @use_state()
+	value, set_value = @use_state(1.)
+
+	pl
+end
+
 # ╔═╡ 3c40962c-ac21-411d-aeec-1d456f10e814
 begin
 	# set_value(1.2 * value[])
@@ -264,8 +273,62 @@ end
 # ╔═╡ 92c58503-96fc-43dc-b051-40bff55eb142
 @bind n_iter Slider(1:20, default=10, show_value=true)
 
-# ╔═╡ dfa5f319-7948-47a4-85a6-e6e24b749b29
-filename = "/home/paul/Projects/myfile.csv"
+# ╔═╡ 1c1601e0-e23e-4bad-8dd1-bbfa32f89fb2
+begin
+	y, sety = @use_state(Progress(0.))
+	set_progress = (x) -> sety(Progress(x))
+
+	@use_effect([n_iter]) do
+		task = Task() do
+			for i in 1:n_iter
+				sleep(1.)
+				set_progress(i/n_iter)
+			end
+		end |> schedule
+
+		() -> begin
+			if !istaskdone(task) && !istaskfailed(task)
+				Base.schedule(task, InterruptException(), error=true)
+			end
+		end
+	end
+end
+
+# ╔═╡ be32d617-b1c8-4945-8e8e-910c84cc7218
+y
+
+# ╔═╡ e6860783-0c6c-4095-8b9b-e0f506f32fc1
+# begin
+# 	file_content, set_file_content = @use_state("")
+
+# 	@use_effect([filename]) do
+# 		task = Task() do
+# 			@info "restarting" filename
+# 			read(filename, String) |> set_file_content
+
+# 			try
+# 				while true
+# 					watch_file(filename)
+# 					@info "update"
+# 					set_file_content(read(filename, String))
+# 				end
+# 			catch e
+# 				@error "filewatching failed" err=e
+# 				throw(e)
+# 			end
+# 		end |> schedule
+
+# 		() -> begin
+# 			if !istaskdone(task) && !istaskfailed(task)
+# 				Base.schedule(task, InterruptException(), error=true)
+# 			elseif istaskfailed(task)
+# 				@warn "task is failed" res=fetch(task)
+# 			end
+# 		end
+# 	end
+
+# 	file_content |> Text
+# end
 
 # ╔═╡ 0b60be66-b671-41aa-9b18-b43f43420aaf
 macro caller_cell_id()
@@ -281,8 +344,8 @@ Wraps a `Task` with the current cell. When the cell state is reset, sends an `In
 ```julia
 @pluto_async begin
 	while true
-		@info "this is updating"
 		sleep(2.)
+		@info "this is updating"
 	end
 end
 ```
@@ -316,12 +379,19 @@ macro pluto_async(f, cell_id=nothing)
 	end
 end
 
+# ╔═╡ 10f015c0-84b1-43b6-b2c1-83819740af44
+# @pluto_async begin
+# 	while true 
+# 		sleep(2.)
+# 		@info "heyeyeyry"
+# 	end
+# end
+
 # ╔═╡ 461231e8-4958-46b9-88cb-538f9151a4b0
 macro file_watching(filename)
 	cell_id = @caller_cell_id()
 	filename = esc(filename)
 
-	@info "arrival cell_id" cell_id
 	quote
 		file_content, set_file_content = @use_state(read($filename, String), $cell_id)
 
@@ -336,82 +406,48 @@ macro file_watching(filename)
 	end
 end
 
-# ╔═╡ f3224024-f952-4e1c-a424-f3738fbf3625
-function PlutoRunner._self_run(uuid::UUID)
-	@info "got uuid" uuid
-end
-
-# ╔═╡ e473af39-d4f1-4a90-a6c2-15ec17bee632
-begin
-	clock; button;
-	pl, set_plot = @use_state()
-	value, set_value = @use_state(1.)
-
-	pl
-end
-
-# ╔═╡ 1c1601e0-e23e-4bad-8dd1-bbfa32f89fb2
-begin
-	y, sety = @use_state(Progress(0.))
-	set_progress = (x) -> sety(Progress(x))
-
-	@use_effect([n_iter]) do
-		task = Task() do
-			for i in 1:n_iter
-				sleep(1.)
-				set_progress(i/n_iter)
-			end
-		end |> schedule
-
-		() -> begin
-			if !istaskdone(task) && !istaskfailed(task)
-				Base.schedule(task, InterruptException(), error=true)
-			end
-		end
-	end
-end
-
-# ╔═╡ be32d617-b1c8-4945-8e8e-910c84cc7218
-y
-
-# ╔═╡ e6860783-0c6c-4095-8b9b-e0f506f32fc1
-begin
-	file_content, set_file_content = @use_state("")
-
-	@use_effect([filename]) do
-		task = Task() do
-			@info "restarting" filename
-			read(filename, String) |> set_file_content
-
-			try
-				while true
-					watch_file(filename)
-					@info "update"
-					set_file_content(read(filename, String))
-				end
-			catch e
-				@error "filewatching failed" err=e
-				throw(e)
-			end
-		end |> schedule
-
-		() -> begin
-			if !istaskdone(task) && !istaskfailed(task)
-				Base.schedule(task, InterruptException(), error=true)
-			elseif istaskfailed(task)
-				@warn "task is failed" res=fetch(task)
-			end
-		end
-	end
-
-	file_content |> Text
-end
-
-# ╔═╡ 96537080-ad60-45a3-b16b-c35227cdf913
-file_content |> Text
+# ╔═╡ dfa5f319-7948-47a4-85a6-e6e24b749b29
+filename = "/home/paul/Projects/myfile.csv"
 
 # ╔═╡ 0bce9856-6916-4d54-9534-aaddcd8126bc
 (@file_watching(filename) |> Text), @current_cell_id()
+
+# ╔═╡ 480dd46c-cc31-46b5-bc2d-2e1680d5c682
+function ingredients(path::String)
+	# this is from the Julia source code (evalfile in base/loading.jl)
+	# but with the modification that it returns the module instead of the last object
+	name = Symbol(basename(path))
+	m = Module(name)
+	Core.eval(m,
+        Expr(:toplevel,
+             :(eval(x) = $(Expr(:core, :eval))($name, x)),
+             :(include(x) = $(Expr(:top, :include))($name, x)),
+             :(include(mapexpr::Function, x) = $(Expr(:top, :include))(mapexpr, $name, x)),
+             :(include($path))))
+	m
+end
+
+# ╔═╡ d84f47ba-7c18-4d6c-952c-c9a5748a51f8
+macro ingredients(filename)
+	cell_id = @caller_cell_id()
+	filename = esc(filename)
+
+	quote
+		mod, set_mod = @use_state(ingredients($filename), $cell_id)
+
+		@pluto_async($cell_id) do
+			while true
+				watch_file($filename)
+				set_mod(ingredients($filename))
+			end
+		end
+
+		mod
+	end
+end
+
+# ╔═╡ ff764d7d-2c07-44bd-a675-89c9e2b00151
+notebook = @ingredients("/home/paul/Projects/cookie.jl")
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
@@ -562,13 +598,15 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 # ╠═1c1601e0-e23e-4bad-8dd1-bbfa32f89fb2
 # ╠═be32d617-b1c8-4945-8e8e-910c84cc7218
 # ╠═b0350bd0-5dd2-4c73-b301-f076123144c2
-# ╟─dfa5f319-7948-47a4-85a6-e6e24b749b29
 # ╠═e6860783-0c6c-4095-8b9b-e0f506f32fc1
-# ╠═96537080-ad60-45a3-b16b-c35227cdf913
 # ╠═0b60be66-b671-41aa-9b18-b43f43420aaf
 # ╠═9ec99592-955a-41bd-935a-b34f37bb5977
+# ╠═10f015c0-84b1-43b6-b2c1-83819740af44
 # ╠═461231e8-4958-46b9-88cb-538f9151a4b0
-# ╠═f3224024-f952-4e1c-a424-f3738fbf3625
+# ╟─dfa5f319-7948-47a4-85a6-e6e24b749b29
 # ╠═0bce9856-6916-4d54-9534-aaddcd8126bc
+# ╠═480dd46c-cc31-46b5-bc2d-2e1680d5c682
+# ╠═d84f47ba-7c18-4d6c-952c-c9a5748a51f8
+# ╠═ff764d7d-2c07-44bd-a675-89c9e2b00151
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

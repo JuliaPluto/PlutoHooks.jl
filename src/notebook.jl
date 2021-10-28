@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.16.2
+# v0.17.0
 
 using Markdown
 using InteractiveUtils
@@ -14,15 +14,16 @@ macro bind(def, element)
 end
 
 # ╔═╡ 6d25c787-2b82-4d7f-8b10-d92c0ba8bc01
-using PlutoUI
+using PlutoUI, PlutoTest # TODO: Make dependencies only for development
+
+# ╔═╡ 49cb409b-e564-47aa-9dae-9bc5bffa991d
+using UUIDs
 
 # ╔═╡ 729ae3bb-79c2-4fcd-8645-7e0071365537
 md"""
 # PlutoHooks.jl
 
 Let's implement some [React.js](https://reactjs.org/) features in [Pluto.jl](https://plutojl.org) using the function wrapped macros. Note that function wrapping does not work for all instructions. The details can be seen in [`ExpressionExplorer.jl`](https://github.com/fonsp/Pluto.jl/blob/9b4b4f3f47cd95d2529229296f9b3007ed1e2163/src/analysis/ExpressionExplorer.jl#L1222-L1240). Use the Pluto version in [Pluto.jl#1597](https://github.com/fonsp/Pluto.jl/pull/1597) to try it out.
-
-
 """
 
 # ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
@@ -31,16 +32,16 @@ Returns a `Tuple{Ref{Any},Function}` where the `Ref` contains the last value of 
 
 ```julia
 # in one cell
-state, set_state = @useState(1.2)
+state, set_state = @use_state(1.2)
 
-# in another cell
+# later
 set_state(3.0)
 
 # in yet another cell
 x = state[]
 ```
 """
-macro useState(init=nothing)
+macro use_state(init=nothing)
 	initialized = Ref{Bool}(false)
 	state_ref = Ref{Any}(nothing)
 
@@ -67,14 +68,11 @@ end
 # ╔═╡ e473af39-d4f1-4a90-a6c2-15ec17bee632
 begin
 	clock; button;
-	pl, set_plot = @useState()
-	value, set_value = @useState(1.)
+	pl, set_plot = @use_state()
+	value, set_value = @use_state(1.)
 
 	pl[]
 end
-
-# ╔═╡ 92071f7f-74e2-4c29-9c8d-4d9849a861ed
-parse_description(ex) = Ref(Dict())
 
 # ╔═╡ 3c40962c-ac21-411d-aeec-1d456f10e814
 begin
@@ -83,47 +81,50 @@ begin
 	set_plot((x -> sin(value[] * x)).(1:10))
 end;
 
-# ╔═╡ 89b3f807-2e24-4454-8f4c-b2a98aee571e
-"""
-Used to run a side effect only when the cell is run for the first time. This is missing the React.js functionality of specifying dependencies.
-
-```julia
-@useEffect([x, y]) do
-	x + y
-end
-```
-"""
-macro useEffect(f, dependencies=:([]))
-	dependencies_prev_values = Ref{Vector{Any}}([nothing for _ in 1:length(dependencies.args)])
-
+# ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
+macro use_ref(init=nothing)
+	ref = Ref{Any}()
+	initialized = Ref{Bool}(false)
 	quote
-		done, setdone = @useState(false)
-		if !done[] || $dependencies != $dependencies_prev_values[]
-			done[] = true
-			$dependencies_prev_values[] = $dependencies
-			$f()
+		if !$initialized[]
+			$ref[] = $init
+			$initialized[] = true
 		end
+		$ref
 	end
 end
 
+# ╔═╡ c23ad7e6-6bb0-4900-998e-7102316fb0ec
+md"""
+### `@use_effect` playground
+"""
+
 # ╔═╡ 432135f3-431f-43ed-b80e-63bda8096ffe
-@bind use_effect Button("Click to try @useEffect")
+@bind use_effect Button("Click to try @use_effect")
 
 # ╔═╡ 82ddd527-f6a2-4359-a36e-238b2543330d
-x = 10
+@bind x Slider(1:10, show_value=true)
 
-# ╔═╡ 3d0683d4-8da0-48e1-94d4-bce3d23f8313
-use_effect; @useEffect([x]) do 
-	value[]
+# ╔═╡ cadf9ac8-4caa-4bf4-bebe-f911b949f490
+begin
+	struct Server
+		x
+		function Server(x)
+			@info "server instanciation $x"
+			new(x)
+		end
+	end
+	start(s::Server) = @info "starting server $(s.x)"
+	stop(s::Server) = @info "stopping server $(s.x)"
 end
 
 # ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 """
 Does the computation only at init time.
 """
-macro useMemo(f)
+macro use_memo(f)
 	quote
-		ref, _ = @useState($f())
+		ref = @use_ref($f())
 		ref[]
 	end
 end
@@ -135,19 +136,111 @@ end
 begin
 	do_compute;
 	with_terminal() do
-		@time @useMemo(() -> begin
+		@time @use_memo(() -> begin
 			sleep(1.)
 			return :very_long_compute
 		end)
 	end
 end
 
+# ╔═╡ 274c2be6-6075-45cf-b28a-862c8bf64bd4
+md"""
+### Util functions
+---
+"""
+
+# ╔═╡ 51371f3c-472e-4002-bae4-c20b8364af32
+"""
+Turns different way of expressing code to an anonymous arrow function definition.
+"""
+function as_arrow(ex::Expr)
+	if Meta.isexpr(ex, :(->))
+		ex
+	elseif Meta.isexpr(ex, :do)
+		Expr(:(->), ex.args...)
+	elseif Meta.isexpr(ex, :block)
+		Expr(:(->), Expr(:tuple), ex)
+	elseif Meta.isexpr(ex, :function)
+		root = ex.args[1]
+		Expr(:(->), root.head == :call ? Expr(:tuple, root.args[2:end]...) : root, ex.args[2])
+	else
+		throw("Can't transform expression into an arrow function")
+	end
+end
+
+# ╔═╡ 89b3f807-2e24-4454-8f4c-b2a98aee571e
+"""
+Used to run a side effect only when the cell is run for the first time. This is missing the React.js functionality of specifying dependencies.
+
+```julia
+@use_effect([x, y]) do
+	x + y
+end
+```
+"""
+macro use_effect(f, dependencies=:([]))
+	dependencies_prev_values = [nothing for _ in 1:length(dependencies.args)]
+	cell_id = PlutoRunner.parse_cell_id(string(__source__.file))
+	dependencies = esc(dependencies)
+
+	quote
+		done = @use_ref(false)
+		cleanup = @use_ref(() -> nothing)
+		dependencies_prev_values = @use_ref($dependencies_prev_values)
+
+		PlutoRunner.register_cleanup($cell_id) do
+			cleanup[]()
+		end
+
+		if !done[] || $dependencies != dependencies_prev_values[]
+			done[] = true
+			dependencies_prev_values[] = copy($dependencies)
+			cleanup[]()
+
+	
+			local cleanup_func = $(esc(as_arrow(f)))()
+			if cleanup_func isa Function
+				cleanup[] = cleanup_func
+			end
+		end
+
+		nothing
+	end
+end
+
+# ╔═╡ 3d0683d4-8da0-48e1-94d4-bce3d23f8313
+begin
+	use_effect
+	server = Server(x)
+
+	@use_effect([x]) do
+		start(server)
+
+		() -> begin
+			stop(server)
+		end
+	end
+
+end
+
+# ╔═╡ 6f38af33-9cae-4e2b-8431-8ea3185e109a
+as_arrow(:(function(x, y) x+y end))
+
+# ╔═╡ 15498bfa-a8f3-4e7d-aa2e-4daf00be1ef5
+as_arrow(:(function f(x, y) x+y end))
+
+# ╔═╡ b889049a-ab95-454d-8297-b484ea52f4f5
+as_arrow(:(function f() x+y end))
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+PlutoTest = "cb4044da-4d16-4ffa-a6a3-8cad7f73ebdc"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
+PlutoTest = "~0.1.2"
 PlutoUI = "~0.7.16"
 """
 
@@ -205,6 +298,12 @@ git-tree-sha1 = "f19e978f81eca5fd7620650d7dbea58f825802ee"
 uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.1.0"
 
+[[PlutoTest]]
+deps = ["HypertextLiteral", "InteractiveUtils", "Markdown", "Test"]
+git-tree-sha1 = "b7da10d62c1ffebd37d4af8d93ee0003e9248452"
+uuid = "cb4044da-4d16-4ffa-a6a3-8cad7f73ebdc"
+version = "0.1.2"
+
 [[PlutoUI]]
 deps = ["Base64", "Dates", "Hyperscript", "HypertextLiteral", "IOCapture", "InteractiveUtils", "JSON", "Logging", "Markdown", "Random", "Reexport", "UUIDs"]
 git-tree-sha1 = "4c8a7d080daca18545c56f1cac28710c362478f3"
@@ -244,20 +343,28 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 # ╔═╡ Cell order:
 # ╟─729ae3bb-79c2-4fcd-8645-7e0071365537
-# ╠═6d25c787-2b82-4d7f-8b10-d92c0ba8bc01
 # ╠═1df0a586-3692-11ec-0171-0b48a4a1c4bd
 # ╟─4960d74a-6792-4e17-8fa2-a7f0cfa604d6
 # ╟─d9b59671-848b-4f82-89bf-6fc51773cf3e
 # ╟─7cdd6ad5-d2e5-4a0d-80e3-810a8d475d0f
 # ╠═e473af39-d4f1-4a90-a6c2-15ec17bee632
-# ╠═92071f7f-74e2-4c29-9c8d-4d9849a861ed
 # ╠═3c40962c-ac21-411d-aeec-1d456f10e814
+# ╠═c82c8aa9-46a9-4110-88af-8638625222e3
 # ╠═89b3f807-2e24-4454-8f4c-b2a98aee571e
+# ╟─c23ad7e6-6bb0-4900-998e-7102316fb0ec
 # ╟─432135f3-431f-43ed-b80e-63bda8096ffe
-# ╠═82ddd527-f6a2-4359-a36e-238b2543330d
+# ╟─82ddd527-f6a2-4359-a36e-238b2543330d
+# ╠═cadf9ac8-4caa-4bf4-bebe-f911b949f490
 # ╠═3d0683d4-8da0-48e1-94d4-bce3d23f8313
 # ╠═bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 # ╟─780dfe21-a12c-48d4-977b-df83257e201e
 # ╠═5ee52f3d-5f4f-40c3-a0e1-ede73fcdeb28
+# ╟─274c2be6-6075-45cf-b28a-862c8bf64bd4
+# ╠═6d25c787-2b82-4d7f-8b10-d92c0ba8bc01
+# ╠═49cb409b-e564-47aa-9dae-9bc5bffa991d
+# ╠═51371f3c-472e-4002-bae4-c20b8364af32
+# ╠═6f38af33-9cae-4e2b-8431-8ea3185e109a
+# ╠═15498bfa-a8f3-4e7d-aa2e-4daf00be1ef5
+# ╠═b889049a-ab95-454d-8297-b484ea52f4f5
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

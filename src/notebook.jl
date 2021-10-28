@@ -19,12 +19,34 @@ using PlutoUI, PlutoTest # TODO: Make dependencies only for development
 # ╔═╡ 49cb409b-e564-47aa-9dae-9bc5bffa991d
 using UUIDs
 
+# ╔═╡ f751bfc3-0273-4ac1-9140-b6f8a16c0794
+using HypertextLiteral
+
+# ╔═╡ b0350bd0-5dd2-4c73-b301-f076123144c2
+using FileWatching
+
 # ╔═╡ 729ae3bb-79c2-4fcd-8645-7e0071365537
 md"""
 # PlutoHooks.jl
 
 Let's implement some [React.js](https://reactjs.org/) features in [Pluto.jl](https://plutojl.org) using the function wrapped macros. Note that function wrapping does not work for all instructions. The details can be seen in [`ExpressionExplorer.jl`](https://github.com/fonsp/Pluto.jl/blob/9b4b4f3f47cd95d2529229296f9b3007ed1e2163/src/analysis/ExpressionExplorer.jl#L1222-L1240). Use the Pluto version in [Pluto.jl#1597](https://github.com/fonsp/Pluto.jl/pull/1597) to try it out.
 """
+
+# ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
+"""
+Embeds a reference in the AST. This can be used to associate state to a function wapped cell.
+"""
+macro use_ref(init=nothing)
+	ref = Ref{Any}()
+	initialized = Ref{Bool}(false)
+	quote
+		if !$initialized[]
+			$ref[] = $init
+			$initialized[] = true
+		end
+		$ref
+	end
+end
 
 # ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
 """
@@ -41,18 +63,17 @@ set_state(3.0)
 x = state[]
 ```
 """
-macro use_state(init=nothing)
-	initialized = Ref{Bool}(false)
-	state_ref = Ref{Any}(nothing)
+macro use_state(init=nothing, cell_id=nothing)
+	cell_id = cell_id !== nothing ? cell_id : PlutoRunner.parse_cell_id(string(__source__.file))
 
 	quote
-		set_state = (new) -> ($state_ref[] = new)
-		if !$initialized[]
-			set_state($init)
-			$initialized[] = true
-			
+		state_ref = @use_ref($(esc(init)))
+		set_state = (new) -> begin
+			state_ref[] = new
+			PlutoRunner._self_run($cell_id)
+			@info "called use_state" cell_id=$cell_id
 		end
-		($state_ref, set_state)
+		(state_ref[], set_state)
 	end
 end
 
@@ -65,34 +86,12 @@ end
 # ╔═╡ 7cdd6ad5-d2e5-4a0d-80e3-810a8d475d0f
 @bind button Button()
 
-# ╔═╡ e473af39-d4f1-4a90-a6c2-15ec17bee632
-begin
-	clock; button;
-	pl, set_plot = @use_state()
-	value, set_value = @use_state(1.)
-
-	pl[]
-end
-
 # ╔═╡ 3c40962c-ac21-411d-aeec-1d456f10e814
 begin
-	set_value(1.2 * value[])
+	# set_value(1.2 * value[])
 	
-	set_plot((x -> sin(value[] * x)).(1:10))
+	# set_plot((x -> sin(value[] * x)).(1:10))
 end;
-
-# ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
-macro use_ref(init=nothing)
-	ref = Ref{Any}()
-	initialized = Ref{Bool}(false)
-	quote
-		if !$initialized[]
-			$ref[] = $init
-			$initialized[] = true
-		end
-		$ref
-	end
-end
 
 # ╔═╡ c23ad7e6-6bb0-4900-998e-7102316fb0ec
 md"""
@@ -178,9 +177,9 @@ Used to run a side effect only when the cell is run for the first time. This is 
 end
 ```
 """
-macro use_effect(f, dependencies=:([]))
+macro use_effect(f, dependencies=:([]), cell_id=nothing)
 	dependencies_prev_values = [nothing for _ in 1:length(dependencies.args)]
-	cell_id = PlutoRunner.parse_cell_id(string(__source__.file))
+	cell_id = cell_id !== nothing ? cell_id : PlutoRunner.parse_cell_id(string(__source__.file))
 	dependencies = esc(dependencies)
 
 	quote
@@ -232,14 +231,199 @@ as_arrow(:(function f(x, y) x+y end))
 # ╔═╡ b889049a-ab95-454d-8297-b484ea52f4f5
 as_arrow(:(function f() x+y end))
 
+# ╔═╡ fe191402-fdcf-4e3e-993e-43991576f33b
+macro current_cell_id()
+	PlutoRunner.parse_cell_id(string(__source__.file))
+end
+
+# ╔═╡ 80ed971f-59ba-42ab-ad61-e18026ee68d4
+# let
+# 	x = @use_ref(2)
+# 	if x[] == 2
+# 		@current_cell_id() |> PlutoRunner._self_run
+# 	end
+# 	x[] += 1
+# 	sleep(.8)
+	
+# 	x[]
+# end
+
+# ╔═╡ 6b49426b-12f5-4458-8e6e-c6f0c0365b4b
+struct Progress
+	p::Float64
+end
+
+# ╔═╡ 060fe8be-0ace-4ce5-8485-53cb74fe8319
+function Base.show(io::IO, m::MIME"text/html", p::Progress)
+	content = @htl("""
+		<span>$(floor(p.p*100))%</span>
+	""")
+	show(io, m, content)
+end
+
+# ╔═╡ 92c58503-96fc-43dc-b051-40bff55eb142
+@bind n_iter Slider(1:20, default=10, show_value=true)
+
+# ╔═╡ dfa5f319-7948-47a4-85a6-e6e24b749b29
+filename = "/home/paul/Projects/myfile.csv"
+
+# ╔═╡ 0b60be66-b671-41aa-9b18-b43f43420aaf
+macro caller_cell_id()
+	esc(quote
+        PlutoRunner.parse_cell_id(string(__source__.file::Symbol))
+    end)
+end
+
+# ╔═╡ 9ec99592-955a-41bd-935a-b34f37bb5977
+"""
+Wraps a `Task` with the current cell. When the cell state is reset, sends an `InterruptException` to the underlying `Task`.
+
+```julia
+@pluto_async begin
+	while true
+		@info "this is updating"
+		sleep(2.)
+	end
+end
+```
+
+It can be combined with `@use_state` for background updating of values.
+"""
+macro pluto_async(f, cell_id=nothing)
+	cell_id = cell_id !== nothing ? cell_id : @caller_cell_id()
+
+	quote
+		@use_effect([], $cell_id) do
+			task = Task() do
+				try
+					$(esc(as_arrow(f)))()
+				catch e
+					e isa InterruptException && return
+					@error "task failed" err=e
+				end
+			end |> schedule
+	
+			() -> begin
+				if !istaskdone(task) && !istaskfailed(task)
+					Base.schedule(task, InterruptException(), error=true)
+				elseif istaskfailed(task)
+					res = fetch(task)
+					res isa InterruptException && return
+					@warn "task is failed" res
+				end
+			end
+		end
+	end
+end
+
+# ╔═╡ 461231e8-4958-46b9-88cb-538f9151a4b0
+macro file_watching(filename)
+	cell_id = @caller_cell_id()
+	filename = esc(filename)
+
+	@info "arrival cell_id" cell_id
+	quote
+		file_content, set_file_content = @use_state(read($filename, String), $cell_id)
+
+		@pluto_async($cell_id) do
+			while true
+				watch_file($filename)
+				set_file_content(read($filename, String))
+			end
+		end
+	
+		file_content
+	end
+end
+
+# ╔═╡ f3224024-f952-4e1c-a424-f3738fbf3625
+function PlutoRunner._self_run(uuid::UUID)
+	@info "got uuid" uuid
+end
+
+# ╔═╡ e473af39-d4f1-4a90-a6c2-15ec17bee632
+begin
+	clock; button;
+	pl, set_plot = @use_state()
+	value, set_value = @use_state(1.)
+
+	pl
+end
+
+# ╔═╡ 1c1601e0-e23e-4bad-8dd1-bbfa32f89fb2
+begin
+	y, sety = @use_state(Progress(0.))
+	set_progress = (x) -> sety(Progress(x))
+
+	@use_effect([n_iter]) do
+		task = Task() do
+			for i in 1:n_iter
+				sleep(1.)
+				set_progress(i/n_iter)
+			end
+		end |> schedule
+
+		() -> begin
+			if !istaskdone(task) && !istaskfailed(task)
+				Base.schedule(task, InterruptException(), error=true)
+			end
+		end
+	end
+end
+
+# ╔═╡ be32d617-b1c8-4945-8e8e-910c84cc7218
+y
+
+# ╔═╡ e6860783-0c6c-4095-8b9b-e0f506f32fc1
+begin
+	file_content, set_file_content = @use_state("")
+
+	@use_effect([filename]) do
+		task = Task() do
+			@info "restarting" filename
+			read(filename, String) |> set_file_content
+
+			try
+				while true
+					watch_file(filename)
+					@info "update"
+					set_file_content(read(filename, String))
+				end
+			catch e
+				@error "filewatching failed" err=e
+				throw(e)
+			end
+		end |> schedule
+
+		() -> begin
+			if !istaskdone(task) && !istaskfailed(task)
+				Base.schedule(task, InterruptException(), error=true)
+			elseif istaskfailed(task)
+				@warn "task is failed" res=fetch(task)
+			end
+		end
+	end
+
+	file_content |> Text
+end
+
+# ╔═╡ 96537080-ad60-45a3-b16b-c35227cdf913
+file_content |> Text
+
+# ╔═╡ 0bce9856-6916-4d54-9534-aaddcd8126bc
+(@file_watching(filename) |> Text), @current_cell_id()
+
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
+FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
+HypertextLiteral = "ac1192a8-f4b3-4bfe-ba22-af5b92cd3ab2"
 PlutoTest = "cb4044da-4d16-4ffa-a6a3-8cad7f73ebdc"
 PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 
 [compat]
+HypertextLiteral = "~0.9.2"
 PlutoTest = "~0.1.2"
 PlutoUI = "~0.7.16"
 """
@@ -254,6 +438,9 @@ uuid = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
 [[Dates]]
 deps = ["Printf"]
 uuid = "ade2ca70-3891-5945-98fb-dc099432e06a"
+
+[[FileWatching]]
+uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 
 [[Hyperscript]]
 deps = ["Test"]
@@ -343,13 +530,13 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 
 # ╔═╡ Cell order:
 # ╟─729ae3bb-79c2-4fcd-8645-7e0071365537
+# ╠═c82c8aa9-46a9-4110-88af-8638625222e3
 # ╠═1df0a586-3692-11ec-0171-0b48a4a1c4bd
 # ╟─4960d74a-6792-4e17-8fa2-a7f0cfa604d6
 # ╟─d9b59671-848b-4f82-89bf-6fc51773cf3e
 # ╟─7cdd6ad5-d2e5-4a0d-80e3-810a8d475d0f
 # ╠═e473af39-d4f1-4a90-a6c2-15ec17bee632
 # ╠═3c40962c-ac21-411d-aeec-1d456f10e814
-# ╠═c82c8aa9-46a9-4110-88af-8638625222e3
 # ╠═89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─c23ad7e6-6bb0-4900-998e-7102316fb0ec
 # ╟─432135f3-431f-43ed-b80e-63bda8096ffe
@@ -366,5 +553,22 @@ uuid = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 # ╠═6f38af33-9cae-4e2b-8431-8ea3185e109a
 # ╠═15498bfa-a8f3-4e7d-aa2e-4daf00be1ef5
 # ╠═b889049a-ab95-454d-8297-b484ea52f4f5
+# ╠═fe191402-fdcf-4e3e-993e-43991576f33b
+# ╠═80ed971f-59ba-42ab-ad61-e18026ee68d4
+# ╠═6b49426b-12f5-4458-8e6e-c6f0c0365b4b
+# ╠═060fe8be-0ace-4ce5-8485-53cb74fe8319
+# ╠═f751bfc3-0273-4ac1-9140-b6f8a16c0794
+# ╟─92c58503-96fc-43dc-b051-40bff55eb142
+# ╠═1c1601e0-e23e-4bad-8dd1-bbfa32f89fb2
+# ╠═be32d617-b1c8-4945-8e8e-910c84cc7218
+# ╠═b0350bd0-5dd2-4c73-b301-f076123144c2
+# ╟─dfa5f319-7948-47a4-85a6-e6e24b749b29
+# ╠═e6860783-0c6c-4095-8b9b-e0f506f32fc1
+# ╠═96537080-ad60-45a3-b16b-c35227cdf913
+# ╠═0b60be66-b671-41aa-9b18-b43f43420aaf
+# ╠═9ec99592-955a-41bd-935a-b34f37bb5977
+# ╠═461231e8-4958-46b9-88cb-538f9151a4b0
+# ╠═f3224024-f952-4e1c-a424-f3738fbf3625
+# ╠═0bce9856-6916-4d54-9534-aaddcd8126bc
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -6,4 +6,4 @@ version = "0.0.1"
 [deps]
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
-PlutoUI = "7f904dfe-b85e-4ff6-b463-dae2292396a8"
+UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"

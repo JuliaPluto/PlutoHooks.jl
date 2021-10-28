@@ -33,35 +33,6 @@ macro use_ref(init=nothing)
 	end
 end
 
-# ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
-"""
-Returns a `Tuple{Ref{Any},Function}` where the `Ref` contains the last value of the state and the `Function` can be used to set the state value.
-
-```julia
-# in one cell
-state, set_state = @use_state(1.2)
-
-# later
-set_state(3.0)
-
-# in yet another cell
-x = state[]
-```
-"""
-macro use_state(init=nothing, cell_id=nothing)
-	cell_id = cell_id !== nothing ? cell_id : PlutoRunner.parse_cell_id(string(__source__.file))
-
-	quote
-		state_ref = @use_ref($(esc(init)))
-		set_state = (new) -> begin
-			state_ref[] = new
-			PlutoRunner._self_run($cell_id)
-			@info "called use_state" cell_id=$cell_id
-		end
-		(state_ref[], set_state)
-	end
-end
-
 # ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 """
 Does the computation only at init time.
@@ -78,6 +49,42 @@ md"""
 ### Util functions
 ---
 """
+
+# ╔═╡ 8a6c8e24-1a9a-43f0-93ea-f58042251ba0
+function parse_cell_id(filename::String)
+	if !occursin("#==#", filename)
+		throw("not pluto filename")
+	end
+	split(filename, "#==#") |> last |> UUID
+end
+
+# ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
+"""
+Returns a `Tuple{Ref{Any},Function}` where the `Ref` contains the last value of the state and the `Function` can be used to set the state value.
+
+```julia
+# in one cell
+state, set_state = @use_state(1.2)
+
+# later
+set_state(3.0)
+
+# in yet another cell
+x = state[]
+```
+"""
+macro use_state(init=nothing, cell_id=nothing)
+	cell_id = cell_id !== nothing ? cell_id : parse_cell_id(string(__source__.file))
+
+	quote
+		state_ref = @use_ref($(esc(init)))
+		set_state = (new) -> begin
+			state_ref[] = new
+			Main.PlutoRunner._self_run($cell_id)
+		end
+		(state_ref[], set_state)
+	end
+end
 
 # ╔═╡ 51371f3c-472e-4002-bae4-c20b8364af32
 """
@@ -110,7 +117,7 @@ end
 """
 macro use_effect(f, dependencies=:([]), cell_id=nothing)
 	dependencies_prev_values = [nothing for _ in 1:length(dependencies.args)]
-	cell_id = cell_id !== nothing ? cell_id : PlutoRunner.parse_cell_id(string(__source__.file))
+	cell_id = cell_id !== nothing ? cell_id : parse_cell_id(string(__source__.file))
 	dependencies = esc(dependencies)
 
 	quote
@@ -118,7 +125,7 @@ macro use_effect(f, dependencies=:([]), cell_id=nothing)
 		cleanup = @use_ref(() -> nothing)
 		dependencies_prev_values = @use_ref($dependencies_prev_values)
 
-		PlutoRunner.register_cleanup($cell_id) do
+		Main.PlutoRunner.register_cleanup($cell_id) do
 			cleanup[]()
 		end
 
@@ -127,7 +134,6 @@ macro use_effect(f, dependencies=:([]), cell_id=nothing)
 			dependencies_prev_values[] = copy($dependencies)
 			cleanup[]()
 
-	
 			local cleanup_func = $(esc(as_arrow(f)))()
 			if cleanup_func isa Function
 				cleanup[] = cleanup_func
@@ -149,7 +155,7 @@ as_arrow(:(function f() x+y end))
 
 # ╔═╡ fe191402-fdcf-4e3e-993e-43991576f33b
 macro current_cell_id()
-	PlutoRunner.parse_cell_id(string(__source__.file))
+	parse_cell_id(string(__source__.file))
 end
 
 # ╔═╡ 80ed971f-59ba-42ab-ad61-e18026ee68d4
@@ -200,7 +206,7 @@ end
 # ╔═╡ 0b60be66-b671-41aa-9b18-b43f43420aaf
 macro caller_cell_id()
 	esc(quote
-        PlutoRunner.parse_cell_id(string(__source__.file::Symbol))
+        parse_cell_id(string(__source__.file::Symbol))
     end)
 end
 
@@ -274,7 +280,7 @@ macro file_watching(filename)
 end
 
 # ╔═╡ dfa5f319-7948-47a4-85a6-e6e24b749b29
-filename = "~/Projects/myfile.csv" |> expanduser
+# filename = "~/Projects/myfile.csv" |> expanduser
 
 # ╔═╡ 0bce9856-6916-4d54-9534-aaddcd8126bc
 # (@file_watching(filename) |> Text), @current_cell_id()
@@ -353,6 +359,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 # ╟─274c2be6-6075-45cf-b28a-862c8bf64bd4
 # ╠═49cb409b-e564-47aa-9dae-9bc5bffa991d
+# ╠═8a6c8e24-1a9a-43f0-93ea-f58042251ba0
 # ╠═51371f3c-472e-4002-bae4-c20b8364af32
 # ╠═6f38af33-9cae-4e2b-8431-8ea3185e109a
 # ╠═15498bfa-a8f3-4e7d-aa2e-4daf00be1ef5

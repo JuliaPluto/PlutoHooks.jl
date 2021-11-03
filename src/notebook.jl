@@ -461,9 +461,6 @@ macro skip_as_script(expr)
 	end
 end
 
-# ╔═╡ 92cfc989-5862-4314-ae1b-9cbfc4b42b40
-export @skip_as_script, @use_is_pluto_cell
-
 # ╔═╡ 71963fa5-82f0-4c8d-9368-0d6ba317f59e
 # Notice that even though we run it in this cell's module,
 # that doesn't count as "being in Pluto" enough.
@@ -477,6 +474,28 @@ export @skip_as_script, @use_is_pluto_cell
 		md"✅ Nice, eval() is indeed not the Pluto cell"
 	end
 end
+
+# ╔═╡ ec74d9b7-b2ff-4758-a305-c3f30509a786
+"""
+	@only_as_script expr
+
+Only run the expression if you're **not** running inside a pluto cell. Small wrapper around [`@use_is_pluto_cell`](@ref).
+
+"""
+macro only_as_script(expr)
+	var"@use_is_pluto_cell"
+
+	quote
+		if @use_is_pluto_cell()
+			nothing
+		else
+			$(esc(expr))
+		end
+	end
+end
+
+# ╔═╡ 92cfc989-5862-4314-ae1b-9cbfc4b42b40
+export @use_is_pluto_cell, @skip_as_script, @only_as_script
 
 # ╔═╡ 014d0172-3425-4429-b8d6-1d195bc60a66
 @skip_as_script let
@@ -830,10 +849,11 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─0f632b57-ea01-482b-b93e-d69f962a6d92
 # ╟─d9d14e60-0c91-4eec-ba28-82cf1ebc115f
 # ╟─cce13aec-7cf0-450c-bc93-bcc4e2a70dfe
+# ╟─ec74d9b7-b2ff-4758-a305-c3f30509a786
 # ╟─8c2e9cad-eb63-4af5-8b52-629e8d3439bd
 # ╟─84736507-7ea9-4b4b-9b70-b1e9b4b33cde
 # ╟─014d0172-3425-4429-b8d6-1d195bc60a66
-# ╠═71963fa5-82f0-4c8d-9368-0d6ba317f59e
+# ╟─71963fa5-82f0-4c8d-9368-0d6ba317f59e
 # ╟─118991d7-f470-4775-ac44-4638f4989d58
 # ╟─39aa6082-40ca-40c3-a2c0-4b6221edda32
 # ╟─3d2516f8-569e-40e4-b1dd-9f024f9266e4

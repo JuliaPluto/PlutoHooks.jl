@@ -23,7 +23,15 @@ using FileWatching
 # ╔═╡ 729ae3bb-79c2-4fcd-8645-7e0071365537
 md"""
 # PlutoHooks.jl
-Let's implement some [React.js](https://reactjs.org/) features in [Pluto.jl](https://plutojl.org) using the function wrapped macros. Note that function wrapping does not work for all instructions. The details can be seen in [`ExpressionExplorer.jl`](https://github.com/fonsp/Pluto.jl/blob/9b4b4f3f47cd95d2529229296f9b3007ed1e2163/src/analysis/ExpressionExplorer.jl#L1222-L1240). Use the Pluto version in [Pluto.jl#1597](https://github.com/fonsp/Pluto.jl/pull/1597) to try it out.
+
+Bring your notebook to life! This is an abstraction based on [React.js Hooks](https://reactjs.org/docs/hooks-intro.html) to implement "react-like" features in [Pluto.jl](https://plutojl.org). It allows cells to carry information and processes between updates, and even update itself.
+
+There is a lot you can do with this, but some examples:
+- Run a process and relay it's output to the rest of your notebook.
+- Watch a file and reload the content when it changes.
+- Do a computation on separate thread while the rest of notebook continue running.
+
+For now you need use the [Pluto#main](https://github.com/fonsp/Pluto.jl), but this it will be released very soon.
 """
 
 # ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3

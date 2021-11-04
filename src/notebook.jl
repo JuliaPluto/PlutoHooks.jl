@@ -134,42 +134,6 @@ macro use_state(initial_value)
 	end
 end
 
-# ╔═╡ cd048a16-37f5-455e-8b6a-c098d5f83b96
-"""
-	@use_deps(deps::Vector) do
-		# ... others hooks ...
-	end
-
-Experimental function to wrap a bunch of macros in a fake cell that fully refreshes when the deps provided change. This is useful if you make a macro that wraps a bunch of Pluto Hooks, and you just want to refresh the whole block when something changes. This also clears [`@use_ref`](@ref)'s and [`@use_state`](@ref)'s, even though these don't even have a deps argument.
-
-Not entirely sure how much this is necessary (or if I'm missing something obvious that doesn't make it necessary).
-
-Also, this name does **not** spark joy.
-"""
-macro use_deps(fn_expr, deps)
-	expanded_fn_expr = macroexpand(__module__, fn_expr)
-
-	cell_id_ref = Ref{UUID}(uuid4())
-
-	perfected_fn_expr = Main.PlutoRunner.replace_pluto_properties_in_expr(
-		expanded_fn_expr;
-		cell_id=:($(cell_id_ref)[]),
-		register_cleanup_function=:(@give_me_register_cleanup_function),
-		# TODO Right now this just runs the whole cell (with all @with_key's)
-		# .... Later I'd ideally have this cache itself and only run when
-		# .... this specific key is asked to run again
-		rerun_cell_function=:(@give_me_rerun_cell_function),
-	)
-	
-	quote
-		if @use_did_deps_change($(esc(deps)))
-			$cell_id_ref[] = uuid4()
-		end
-		
-		$(esc(perfected_fn_expr))()
-	end
-end
-
 # ╔═╡ 89b3f807-2e24-4454-8f4c-b2a98aee571e
 """
 	@use_effect(deps::Vector{Any}) do
@@ -263,9 +227,6 @@ macro use_memo(f, deps)
 	end
 end
 
-# ╔═╡ 3f632c14-5f25-4426-8bff-fd315db55db5
-export @use_ref, @use_state, @use_memo, @use_effect, @use_deps
-
 # ╔═╡ c461f6da-a252-4cb4-b510-a4df5ab85065
 """
 	@use_did_deps_change(deps::Vector{Any})
@@ -342,6 +303,51 @@ function is_running_in_pluto_process()
 	isdefined(Main.PlutoRunner, :GiveMeRegisterCleanupFunction)
 end
 
+# ╔═╡ cd048a16-37f5-455e-8b6a-c098d5f83b96
+"""
+	@use_deps(deps::Vector) do
+		# ... others hooks ...
+	end
+
+Experimental function to wrap a bunch of macros in a fake cell that fully refreshes when the deps provided change. This is useful if you make a macro that wraps a bunch of Pluto Hooks, and you just want to refresh the whole block when something changes. This also clears [`@use_ref`](@ref)'s and [`@use_state`](@ref)'s, even though these don't even have a deps argument.
+
+Not entirely sure how much this is necessary (or if I'm missing something obvious that doesn't make it necessary).
+
+Also, this name does **not** spark joy.
+"""
+macro use_deps(fn_expr, deps)
+	# It's not pretty, but I don't want the macroexpansion to crash already.
+	# So I need this check before everything that uses `PlutoRunner`
+	if !is_running_in_pluto_process()
+		return :(throw(NotRunningInPlutoCellException()))
+	end
+	
+	expanded_fn_expr = macroexpand(__module__, fn_expr)
+
+	cell_id_ref = Ref{UUID}(uuid4())
+
+	perfected_fn_expr = Main.PlutoRunner.replace_pluto_properties_in_expr(
+		expanded_fn_expr;
+		cell_id=:($(cell_id_ref)[]),
+		register_cleanup_function=:(@give_me_register_cleanup_function),
+		# TODO Right now this just runs the whole cell (with all @with_key's)
+		# .... Later I'd ideally have this cache itself and only run when
+		# .... this specific key is asked to run again
+		rerun_cell_function=:(@give_me_rerun_cell_function),
+	)
+	
+	quote
+		if @use_did_deps_change($(esc(deps)))
+			$cell_id_ref[] = uuid4()
+		end
+		
+		$(esc(perfected_fn_expr))()
+	end
+end
+
+# ╔═╡ 3f632c14-5f25-4426-8bff-fd315db55db5
+export @use_ref, @use_state, @use_memo, @use_effect, @use_deps
+
 # ╔═╡ 84736507-7ea9-4b4b-9b70-b1e9b4b33cde
 md"""
 ### Until I get the PlutoTest PR out
@@ -360,40 +366,6 @@ Not yet sure how these should react when they are called outside of Pluto...
 So... Uhhh..., they throw an error now!
 """
 
-# ╔═╡ b36e130e-578b-42cb-8e3a-763f6b97108d
-md"""
-### Very cool small helpers
-
-These are just to make [`@give_me_the_pluto_cell_id`](@ref), [`@give_me_rerun_cell_function`](@ref) and [`@give_me_register_cleanup_function`](@ref) throw whenever you're not in Pluto.
-
-One more reason to not call these directly.
-"""
-
-# ╔═╡ ff97bcce-1d29-469e-a4be-5dc902676057
-Base.@kwdef struct NotRunningInPlutoCellException <: Exception end
-
-# ╔═╡ 78d28d07-5912-4306-ad95-ad245797889f
-function Base.showerror(io::IO, expr::NotRunningInPlutoCellException)
-	print(io, "NotRunningInPlutoCell: Expected to run in a Pluto cell, but wasn't! We'll try to get these hooks to work transparently when switching from Pluto to a script.. but not yet, so just as a precaution: this error!")
-end
-
-# ╔═╡ 1b8d6be4-5ba4-42a8-9276-9ef687a8a7a3
-if is_running_in_pluto_process()
-	function dont_be_pluto_special_value(x::Main.PlutoRunner.SpecialPlutoExprValue)
-		throw(NotRunningInPlutoCellException())
-	end
-end
-
-# ╔═╡ f168c077-59c7-413b-a0ac-c0fd72781b72
-dont_be_pluto_special_value(x::Any) = x
-
-# ╔═╡ a4f9eec2-135f-433a-a19e-fd497ab34fd9
-function throw_if_not_in_pluto_for_now()
-	if !is_running_in_pluto_process()
-		throw(NotRunningInPlutoCellException())
-	end
-end
-
 # ╔═╡ 39aa6082-40ca-40c3-a2c0-4b6221edda32
 """
 	@give_me_the_pluto_cell_id()
@@ -404,8 +376,11 @@ Used inside a Pluto cell this will resolve to the current cell UUID.
 Outside a Pluto cell it will throw an error.
 """
 macro give_me_the_pluto_cell_id()
-	throw_if_not_in_pluto_for_now()
-	:(dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID())))
+	if is_running_in_pluto_process()
+		:(dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID())))
+	else
+		:(throw(NotRunningInPlutoCellException()))
+	end	
 end
 
 # ╔═╡ d9d14e60-0c91-4eec-ba28-82cf1ebc115f
@@ -438,10 +413,14 @@ macro use_is_pluto_cell()
 	# but for some reason skip_as_script seems to want it still
 	var"@give_me_the_pluto_cell_id"
 
+	give_me_cell_id = is_running_in_pluto_process() ?
+		Main.PlutoRunner.GiveMeCellID() :
+		nothing
+	
 	quote
 		if (
 			is_running_in_pluto_process() &&
-			$(Main.PlutoRunner.GiveMeCellID()) != Main.PlutoRunner.GiveMeCellID()
+			$(give_me_cell_id) != Main.PlutoRunner.GiveMeCellID()
 		)
 			true
 		else
@@ -524,8 +503,11 @@ Used inside a Pluto cell this will resolve to a function that, when called, will
 Outside a Pluto cell it will throw an error.
 """
 macro give_me_rerun_cell_function()
-	throw_if_not_in_pluto_for_now()
-	:(dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeRerunCellFunction())))
+	if is_running_in_pluto_process()
+		:(dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeRerunCellFunction())))
+	else
+		:(throw(NotRunningInPlutoCellException()))
+	end
 end
 
 # ╔═╡ cf55239c-526b-48fe-933e-9e8d56161fd6
@@ -538,11 +520,41 @@ Used inside a Pluto cell this will resolve to a function that call be called wit
 Outside a Pluto cell it will throw an error.
 """
 macro give_me_register_cleanup_function()
-	throw_if_not_in_pluto_for_now()
-	:(dont_be_pluto_special_value(
-		$(Main.PlutoRunner.GiveMeRegisterCleanupFunction())
-	))
+	if is_running_in_pluto_process()
+		:(dont_be_pluto_special_value(
+			$(Main.PlutoRunner.GiveMeRegisterCleanupFunction())
+		))
+	else
+		:(throw(NotRunningInPlutoCellException()))
+	end	
 end
+
+# ╔═╡ b36e130e-578b-42cb-8e3a-763f6b97108d
+md"""
+### Very cool small helpers
+
+These are just to make [`@give_me_the_pluto_cell_id`](@ref), [`@give_me_rerun_cell_function`](@ref) and [`@give_me_register_cleanup_function`](@ref) throw whenever you're not in Pluto.
+
+One more reason to not call these directly.
+"""
+
+# ╔═╡ ff97bcce-1d29-469e-a4be-5dc902676057
+Base.@kwdef struct NotRunningInPlutoCellException <: Exception end
+
+# ╔═╡ 78d28d07-5912-4306-ad95-ad245797889f
+function Base.showerror(io::IO, expr::NotRunningInPlutoCellException)
+	print(io, "NotRunningInPlutoCell: Expected to run in a Pluto cell, but wasn't! We'll try to get these hooks to work transparently when switching from Pluto to a script.. but not yet, so just as a precaution: this error!")
+end
+
+# ╔═╡ 1b8d6be4-5ba4-42a8-9276-9ef687a8a7a3
+if is_running_in_pluto_process()
+	function dont_be_pluto_special_value(x::Main.PlutoRunner.SpecialPlutoExprValue)
+		throw(NotRunningInPlutoCellException())
+	end
+end
+
+# ╔═╡ f168c077-59c7-413b-a0ac-c0fd72781b72
+dont_be_pluto_special_value(x::Any) = x
 
 # ╔═╡ 9ec6b9c5-6bc1-4033-ab93-072f783184e9
 md"""
@@ -596,12 +608,6 @@ macro use_reducer(fn, deps=nothing)
 	
 		ref[]
 	end
-end
-
-# ╔═╡ e07edafd-c0fa-4fa8-b63b-1ad4d05f05bb
-@async begin
-	sleep(1)
-	1 + 1
 end
 
 # ╔═╡ c8c560bf-3ef6-492f-933e-21c898fb2db6
@@ -850,7 +856,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═92cfc989-5862-4314-ae1b-9cbfc4b42b40
 # ╟─c82c8aa9-46a9-4110-88af-8638625222e3
 # ╟─1df0a586-3692-11ec-0171-0b48a4a1c4bd
-# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╠═cd048a16-37f5-455e-8b6a-c098d5f83b96
 # ╟─89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 # ╟─c461f6da-a252-4cb4-b510-a4df5ab85065
@@ -871,14 +877,12 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─78d28d07-5912-4306-ad95-ad245797889f
 # ╟─1b8d6be4-5ba4-42a8-9276-9ef687a8a7a3
 # ╟─f168c077-59c7-413b-a0ac-c0fd72781b72
-# ╟─a4f9eec2-135f-433a-a19e-fd497ab34fd9
 # ╟─9ec6b9c5-6bc1-4033-ab93-072f783184e9
 # ╟─fd653af3-be53-4ddd-b69d-3967ef6d588a
 # ╟─b25ccaf1-cf46-4eea-a4d9-16c68cf56fad
 # ╟─e5905d1e-33ec-47fb-9f98-ead82eb03be8
 # ╟─274c2be6-6075-45cf-b28a-862c8bf64bd4
 # ╟─90f051be-4384-4383-9a56-2aa584687dc3
-# ╠═e07edafd-c0fa-4fa8-b63b-1ad4d05f05bb
 # ╟─c8c560bf-3ef6-492f-933e-21c898fb2db6
 # ╟─9ec99592-955a-41bd-935a-b34f37bb5977
 # ╟─f8059bcb-a5bb-4c3d-a438-652b72a5be52

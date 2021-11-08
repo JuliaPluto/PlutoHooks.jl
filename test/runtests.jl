@@ -160,7 +160,7 @@ end
         @test notebook.cells[end].output.body == "1"
 
         WorkspaceManager.unmake_workspace((🍭, notebook))
-        🍭.options.evaluation.workspace_use_distributed = true
+        🍭.options.evaluation.workspace_use_distributed = false
     end
 end
 
@@ -188,4 +188,32 @@ end
     setcode(cell(2), "x = 2")
     update_run!(🍭, notebook, cell(2))
     @test cell(3).output.body == "2"
+end
+
+@testset "use task" begin
+    🍭.options.evaluation.workspace_use_distributed = true
+    notebook = Notebook(Cell.([
+        "using PlutoHooks",
+        """
+        begin
+            state, setstate = @use_state(1)
+            @use_task([]) do
+                sleep(.1)
+                setstate(2)
+            end
+        end
+        """,
+        "state"
+    ]))
+    update_run!(🍭, notebook, notebook.cells)
+
+    @test notebook.cells[3] |> noerror
+    @test notebook.cells[3].output.body == "1"
+
+    sleep(.3)
+
+    @test notebook.cells[3].output.body == "2"
+
+    WorkspaceManager.unmake_workspace((🍭, notebook))
+    🍭.options.evaluation.workspace_use_distributed = false
 end

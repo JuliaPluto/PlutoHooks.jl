@@ -112,9 +112,9 @@ macro use_state(initial_value)
 
 		# But there are no deps! True, but this takes care of initialization,
 		# and the case that @use_deps creates, where we switch the cell_id around.
-		if @use_did_deps_change([])
-			state_ref[] = $(esc(initial_value))
-		end
+		# if @use_did_deps_change([])
+		# 	state_ref[] = $(esc(initial_value))
+		# end
 
 		# TODO Make set_state throw when used after a cell is disposed
 		# .... (so this would require @use_effect)
@@ -126,7 +126,7 @@ macro use_state(initial_value)
 			else
 				new
 			end
-			
+
 			state_ref[] = new_value
 			rerun_cell_fn()
 		end

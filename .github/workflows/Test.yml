@@ -1,0 +1,30 @@
+name: PlutoHooks tests
+
+on:
+  workflow_dispatch:
+  push:
+    paths-ignore:
+      - "*.md"
+    branches:
+      - main
+  pull_request:
+    paths-ignore:
+      - "*.md"
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      matrix: # we don't depend on os specific feature, so keeping it minimal
+        julia-version: ["1.6"]
+        os: ["ubuntu-latest"]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: julia-actions/setup-julia@v1
+        with:
+          - version: ${{ matrix.julia-version }}
+
+      - uses: julia-actions/julia-runtest@v1

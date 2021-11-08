@@ -245,7 +245,7 @@ macro use_did_deps_change(deps)
 	initialized_ref = Ref(false)
 	last_deps_ref = Ref{Any}(nothing)
 	last_cell_id_ref = Ref{Any}(nothing)
-	
+
 	quote
 		initialized_ref = $(initialized_ref)
 		last_deps_ref = $(last_deps_ref)
@@ -321,27 +321,15 @@ macro use_deps(fn_expr, deps)
 	if !is_running_in_pluto_process()
 		return :(throw(NotRunningInPlutoCellException()))
 	end
-	
-	expanded_fn_expr = macroexpand(__module__, fn_expr)
 
 	cell_id_ref = Ref{UUID}(uuid4())
 
-	perfected_fn_expr = Main.PlutoRunner.replace_pluto_properties_in_expr(
-		expanded_fn_expr;
-		cell_id=:($(cell_id_ref)[]),
-		register_cleanup_function=:(@give_me_register_cleanup_function),
-		# TODO Right now this just runs the whole cell (with all @with_key's)
-		# .... Later I'd ideally have this cache itself and only run when
-		# .... this specific key is asked to run again
-		rerun_cell_function=:(@give_me_rerun_cell_function),
-	)
-	
 	quote
 		if @use_did_deps_change($(esc(deps)))
 			$cell_id_ref[] = uuid4()
 		end
-		
-		$(esc(perfected_fn_expr))()
+
+		with_cell_id($(esc(fn_expr)), $cell_id_ref[])
 	end
 end
 
@@ -366,6 +354,9 @@ Not yet sure how these should react when they are called outside of Pluto...
 So... Uhhh..., they throw an error now!
 """
 
+# ╔═╡ 405fb702-cf4a-4d34-b8ed-d3258a61256b
+const overwritten_cell_id = Ref{Union{Nothing,UUID}}(nothing)
+
 # ╔═╡ 39aa6082-40ca-40c3-a2c0-4b6221edda32
 """
 	@give_me_the_pluto_cell_id()
@@ -377,7 +368,7 @@ Outside a Pluto cell it will throw an error.
 """
 macro give_me_the_pluto_cell_id()
 	if is_running_in_pluto_process()
-		:(dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID())))
+		:(something(overwritten_cell_id[], dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID()))))
 	else
 		:(throw(NotRunningInPlutoCellException()))
 	end	
@@ -527,6 +518,21 @@ macro give_me_register_cleanup_function()
 	else
 		:(throw(NotRunningInPlutoCellException()))
 	end	
+end
+
+# ╔═╡ 86a2f051-c554-4a1c-baee-8d01653c15be
+"""
+	with_cell_id(f, cell_id)
+
+> ⚠️ Don't use this directly!! if you think you need it, you need [`@use_deps`](@ref).
+
+Used inside a cell to get the "proxy" cell id. This could be the real one but also a fake one in case your hook is called from another hook.
+"""
+function with_cell_id(f::Function, cell_id)
+	overwritten_cell_id[] = cell_id
+	res = f()
+	overwritten_cell_id[] = nothing
+	res
 end
 
 # ╔═╡ b36e130e-578b-42cb-8e3a-763f6b97108d
@@ -856,7 +862,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═92cfc989-5862-4314-ae1b-9cbfc4b42b40
 # ╟─c82c8aa9-46a9-4110-88af-8638625222e3
 # ╟─1df0a586-3692-11ec-0171-0b48a4a1c4bd
-# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╠═cd048a16-37f5-455e-8b6a-c098d5f83b96
 # ╟─89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 # ╟─c461f6da-a252-4cb4-b510-a4df5ab85065
@@ -869,9 +875,11 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─014d0172-3425-4429-b8d6-1d195bc60a66
 # ╟─71963fa5-82f0-4c8d-9368-0d6ba317f59e
 # ╟─118991d7-f470-4775-ac44-4638f4989d58
+# ╟─405fb702-cf4a-4d34-b8ed-d3258a61256b
 # ╟─39aa6082-40ca-40c3-a2c0-4b6221edda32
 # ╟─3d2516f8-569e-40e4-b1dd-9f024f9266e4
 # ╟─cf55239c-526b-48fe-933e-9e8d56161fd6
+# ╟─86a2f051-c554-4a1c-baee-8d01653c15be
 # ╟─b36e130e-578b-42cb-8e3a-763f6b97108d
 # ╠═ff97bcce-1d29-469e-a4be-5dc902676057
 # ╟─78d28d07-5912-4306-ad95-ad245797889f

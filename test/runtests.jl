@@ -291,10 +291,7 @@ end
 
         sleep(1.) # TODO don't use sleeps in every async test
 
-        # @use_task does not work when PlutoHooks is not in the scope
-        # of the calling module. Worse than that it fails silently and "resets"
-        # any hooks actually being used without throwing an error.
-        @test_broken notebook.cells[3].output.body == "2"
+        @test notebook.cells[3].output.body == "2"
 
         WorkspaceManager.unmake_workspace((🍭, notebook))
         🍭.options.evaluation.workspace_use_distributed = false

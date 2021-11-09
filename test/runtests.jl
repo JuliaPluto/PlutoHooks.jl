@@ -233,32 +233,70 @@ end
 end
 
 @testset "use task" begin
-    🍭.options.evaluation.workspace_use_distributed = true
-    notebook = Notebook(Cell.([
-        "using PlutoHooks: @use_task, @use_state",
-        """
-        begin
-            state, setstate = @use_state(1)
-            @use_task([]) do
-                sleep(.1)
-                setstate(2)
+    @testset "Syntax with module" begin
+        🍭.options.evaluation.workspace_use_distributed = true
+        notebook = Notebook(Cell.([
+            "using PlutoHooks",
+            """
+            begin
+                state, setstate = @use_state(1)
+                # The `PlutoHooks.@use_task([]) do; end` does not work in Julia
+                # See https://github.com/JuliaLang/julia/issues/43018
+                @PlutoHooks.use_task([]) do
+                    sleep(.1)
+                    setstate(2)
+                end
             end
-        end
-        """,
-        "state",
-        with_test_env(),
-    ]))
-    update_run!(🍭, notebook, notebook.cells)
+            """,
+            "state",
+            with_test_env(),
+        ]))
+        update_run!(🍭, notebook, notebook.cells)
 
-    @test notebook.cells[2] |> noerror
-    @test notebook.cells[3] |> noerror
-    @test notebook.cells[3].output.body == "1"
+        @test notebook.cells[2] |> noerror
+        @test notebook.cells[3] |> noerror
+        @test notebook.cells[3].output.body == "1"
 
-    sleep(2.) # TODO don't use sleeps in every async test
+        sleep(1.) # TODO don't use sleeps in every async test
 
-    # broken but i don't know yet why
-    @test_broken notebook.cells[3].output.body == "2"
+        # PlutoHooks is in scope so @use_task works
+        @test notebook.cells[3].output.body == "2"
 
-    WorkspaceManager.unmake_workspace((🍭, notebook))
-    🍭.options.evaluation.workspace_use_distributed = false
+        WorkspaceManager.unmake_workspace((🍭, notebook))
+        🍭.options.evaluation.workspace_use_distributed = false
+    end
+    @testset "Syntax without module" begin
+        # Notice how this testset is almost identical to the previous one but the task fails to set the state ?
+
+        🍭.options.evaluation.workspace_use_distributed = true
+        notebook = Notebook(Cell.([
+            "using PlutoHooks: @use_task, @use_state",
+            """
+            begin
+                state, setstate = @use_state(1)
+                @use_task([]) do
+                    sleep(.1)
+                    setstate(2)
+                end
+            end
+            """,
+            "state",
+            with_test_env(),
+        ]))
+        update_run!(🍭, notebook, notebook.cells)
+
+        @test notebook.cells[2] |> noerror
+        @test notebook.cells[3] |> noerror
+        @test notebook.cells[3].output.body == "1"
+
+        sleep(1.) # TODO don't use sleeps in every async test
+
+        # @use_task does not work when PlutoHooks is not in the scope
+        # of the calling module. Worse than that it fails silently and "resets"
+        # any hooks actually being used without throwing an error.
+        @test_broken notebook.cells[3].output.body == "2"
+
+        WorkspaceManager.unmake_workspace((🍭, notebook))
+        🍭.options.evaluation.workspace_use_distributed = false
+    end
 end

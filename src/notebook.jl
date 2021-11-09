@@ -529,10 +529,14 @@ end
 Used inside a cell to get the "proxy" cell id. This could be the real one but also a fake one in case your hook is called from another hook.
 """
 function with_cell_id(f::Function, cell_id)
+	previous_cell_id = overwritten_cell_id[]
 	overwritten_cell_id[] = cell_id
-	res = f()
-	overwritten_cell_id[] = nothing
-	res
+	try
+		f()
+	finally
+		overwritten_cell_id[] = previous_cell_id
+		nothing
+	end
 end
 
 # ╔═╡ b36e130e-578b-42cb-8e3a-763f6b97108d
@@ -636,35 +640,39 @@ I'm still wondering if it is best to have `deps=nothing` as a default, or have `
 """
 macro use_task(f, deps)
 	quote
-		@use_deps($(esc(deps))) do
-			_, refresh = @use_state(nothing)
-			task_ref = @use_ref(Task($(esc(f))))
+		try
+			@use_deps($(esc(deps))) do
+				_, refresh = @use_state(nothing)
+				task_ref = @use_ref(Task($(esc(f))))
+		
+				@use_effect([]) do
+					task = task_ref[]
 	
-			@use_effect([]) do
-				task = task_ref[]
-
-				schedule(Task() do
-					try
-						fetch(task)
-					finally
-						refresh(nothing)
-					end
-				end)
-		
-				schedule(task)
-		
-				return function()
-					if !istaskdone(task)
+					schedule(Task() do
 						try
-							Base.schedule(task, InterruptException(), error=true)
-						catch error
-							nothing
+							fetch(task)
+						finally
+							refresh(nothing)
+						end
+					end)
+			
+					schedule(task)
+			
+					return function()
+						if !istaskdone(task)
+							try
+								Base.schedule(task, InterruptException(), error=true)
+							catch error
+								nothing
+							end
 						end
 					end
 				end
+		
+				task_ref[]
 			end
-	
-			task_ref[]
+		catch e
+			@warn "Got an error in use_task" e
 		end
 	end
 end
@@ -862,7 +870,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═92cfc989-5862-4314-ae1b-9cbfc4b42b40
 # ╟─c82c8aa9-46a9-4110-88af-8638625222e3
 # ╟─1df0a586-3692-11ec-0171-0b48a4a1c4bd
-# ╠═cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
 # ╟─89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
 # ╟─c461f6da-a252-4cb4-b510-a4df5ab85065
@@ -892,7 +900,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─274c2be6-6075-45cf-b28a-862c8bf64bd4
 # ╟─90f051be-4384-4383-9a56-2aa584687dc3
 # ╟─c8c560bf-3ef6-492f-933e-21c898fb2db6
-# ╟─9ec99592-955a-41bd-935a-b34f37bb5977
+# ╠═9ec99592-955a-41bd-935a-b34f37bb5977
 # ╟─f8059bcb-a5bb-4c3d-a438-652b72a5be52
 # ╠═59c673cf-3915-453a-a196-a6cd265398f0
 # ╠═80269b83-bab9-4673-81d5-e75d68139969

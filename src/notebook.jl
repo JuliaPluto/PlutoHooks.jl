@@ -34,106 +34,6 @@ There is a lot you can do with this, but some examples:
 For now you need use the [Pluto#main](https://github.com/fonsp/Pluto.jl), but this it will be released very soon.
 """
 
-# ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
-"""
-	@use_ref(initial_value::Any)::Ref{Any}
-
-Creates a Ref that is stable over multiple **implicit** runs of the cell. Implicit run meaning a variable (or a bond) used in this cell is updated, causing this cell to re-run. When you press shift+enter in Pluto however, this ref will reset.
-
-This is useful to keep state around between runs.
-"""
-macro use_ref(initial_value=nothing)
-	ref_ref = Ref(Ref{Any}())
-
-	quote
-		# use_did_deps_change with empty array so it only refreshes
-		# initially and on cell refresh.
-		# You might wonder: But Michiel, this already refreshes on cell refresh,
-		# 	because the macro will rerun!
-		# I hear you. But I have bigger plans..... 😈
-		if @use_did_deps_change([])
-			$ref_ref[] = Ref{Any}($(esc(initial_value)))
-		end
-		$ref_ref[]
-	end
-end
-
-# ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
-"""
-	state, set_state = @use_state(initial_value::Any)
-
-Returns a tuple for an update-able value. `state` will be whatever value you put in, and `set_state` is a function that you can call with a value, and it will set `state` to that value, and re-run the cell. Useful in combination with [`@use_effect`](@ref):
-
-```julia
-web_response = let
-	state, set_state = @use_state(nothing)
-
-	@use_effect([]) do
-		schedule(Task() do
-			response = HTTP.fetch("idk-what-api-HTTP.jl-has")
-			set_state(response)
-		end)
-	end
-
-	state
-end
-```
-
-Be careful to have your [`@use_effect`](@ref) not rely on `state`, because it will most likely not have a reference to the latest state, but to the `state` at the moment that the [`@use_effect`](@ref) first ran.
-
-To circumvent the most common case where this is a problem, you can pass a function to `set_state` that recieves the previous state as an argument:
-
-```julia
-counter = begin
-	state, set_state = @use_state(0)
-
-	@use_effect([]) do
-		schedule(Task() do
-			while true
-				sleep(1)
-				set_state(function(previous_state)
-					previous_state + 1
-				end)
-			end
-		end)
-
-		# In the real world this should also return a cleanup function,
-		# More on that in the docs for @use_effect
-	end
-
-	state
-end
-```
-"""
-macro use_state(initial_value)
-	quote
-		rerun_cell_fn = @give_me_rerun_cell_function()
-		state_ref = @use_ref($(esc(initial_value)))
-
-		# But there are no deps! True, but this takes care of initialization,
-		# and the case that @use_deps creates, where we switch the cell_id around.
-		if @use_did_deps_change([])
-			state_ref[] = $(esc(initial_value))
-		end
-
-		# TODO Make set_state throw when used after a cell is disposed
-		# .... (so this would require @use_effect)
-		# .... Reason I want this is because it will help a bunch in spotting
-		# .... tasks that don't get killed, stuff like that.
-		set_state = (new) -> begin
-			new_value = if hasmethod(new, Tuple{typeof(new)})
-				new(state_ref[])
-			else
-				new
-			end
-			
-			state_ref[] = new_value
-			rerun_cell_fn()
-		end
-		(state_ref[], set_state)
-	end
-end
-
 # ╔═╡ 89b3f807-2e24-4454-8f4c-b2a98aee571e
 """
 	@use_effect(deps::Vector{Any}) do
@@ -195,35 +95,27 @@ macro use_effect(f, deps)
 	end
 end
 
-# ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
+# ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
 """
-	@use_memo(deps::Vector{Any}) do
-		# Expensive computation/loading
-	end
+	@use_ref(initial_value::Any)::Ref{Any}
 
-Does a computation only when the deps array has changed.
-This is useful for heavy computations as well as resource fetches like file reading or fetching from the network.
+Creates a Ref that is stable over multiple **implicit** runs of the cell. Implicit run meaning a variable (or a bond) used in this cell is updated, causing this cell to re-run. When you press shift+enter in Pluto however, this ref will reset.
 
-```julia
-# Only read a file once
-@use_memo([filename]) do
-	read(filename)
-end
-```
-
-```julia
-@use_memo([a, b]) do
-	a + b # But they're like really big numbers
-end
-```
+This is useful to keep state around between runs.
 """
-macro use_memo(f, deps)
+macro use_ref(initial_value=nothing)
+	ref_ref = Ref(Ref{Any}())
+
 	quote
-		ref = @use_ref(nothing)
-		if @use_did_deps_change($(esc(deps)))
-			ref[] = $(esc(f))()
+		# use_did_deps_change with empty array so it only refreshes
+		# initially and on cell refresh.
+		# You might wonder: But Michiel, this already refreshes on cell refresh,
+		# 	because the macro will rerun!
+		# I hear you. But I have bigger plans..... 😈
+		if @use_did_deps_change([])
+			$ref_ref[] = Ref{Any}($(esc(initial_value)))
 		end
-		ref[]
+		$ref_ref[]
 	end
 end
 
@@ -279,6 +171,141 @@ macro use_did_deps_change(deps)
 			end
 		end
 	end
+end
+
+# ╔═╡ 7958df12-5f3b-4c36-9e67-7808cf19fd6a
+macro hook(macro_definition_expr)
+	@assert Meta.isexpr(macro_definition_expr, :macro, 2)
+	
+	macro_name = macro_definition_expr.args[begin].args[begin]
+	macro_args = macro_definition_expr.args[begin].args[begin+1:end]
+	macro_body = macro_definition_expr.args[begin+1]
+
+	@assert(
+		macro_name isa Symbol && startswith(string(macro_name), "use_"),
+		"Hook name has to start with `use_`"
+	)
+
+	map_args = map(macro_args) do arg
+		:($(arg) = $(Expr(:$, arg)))
+	end
+
+	macro_body = macroexpand(__module__, macro_body)
+
+	quoted_body = Meta.quot(quote
+		$(map_args...)
+		$(macro_body)
+	end)
+	
+	quote
+		macro $(esc(macro_name))($(macro_args...))
+			$(quoted_body)
+		end
+	end
+end
+
+# ╔═╡ 1df0a586-3692-11ec-0171-0b48a4a1c4bd
+"""
+	state, set_state = @use_state(initial_value::Any)
+
+Returns a tuple for an update-able value. `state` will be whatever value you put in, and `set_state` is a function that you can call with a value, and it will set `state` to that value, and re-run the cell. Useful in combination with [`@use_effect`](@ref):
+
+```julia
+web_response = let
+	state, set_state = @use_state(nothing)
+
+	@use_effect([]) do
+		schedule(Task() do
+			response = HTTP.fetch("idk-what-api-HTTP.jl-has")
+			set_state(response)
+		end)
+	end
+
+	state
+end
+```
+
+Be careful to have your [`@use_effect`](@ref) not rely on `state`, because it will most likely not have a reference to the latest state, but to the `state` at the moment that the [`@use_effect`](@ref) first ran.
+
+To circumvent the most common case where this is a problem, you can pass a function to `set_state` that recieves the previous state as an argument:
+
+```julia
+counter = begin
+	state, set_state = @use_state(0)
+
+	@use_effect([]) do
+		schedule(Task() do
+			while true
+				sleep(1)
+				set_state(function(previous_state)
+					previous_state + 1
+				end)
+			end
+		end)
+
+		# In the real world this should also return a cleanup function,
+		# More on that in the docs for @use_effect
+	end
+
+	state
+end
+```
+"""
+@hook macro use_state(initial_value)
+	rerun_cell_fn = @give_me_rerun_cell_function()
+	state_ref = @use_ref($(esc(initial_value)))
+
+	# But there are no deps! True, but this takes care of initialization,
+	# and the case that @use_deps creates, where we switch the cell_id around.
+	if @use_did_deps_change([])
+		state_ref[] = $(esc(initial_value))
+	end
+
+	# TODO Make set_state throw when used after a cell is disposed
+	# .... (so this would require @use_effect)
+	# .... Reason I want this is because it will help a bunch in spotting
+	# .... tasks that don't get killed, stuff like that.
+	set_state = (new) -> begin
+		new_value = if hasmethod(new, Tuple{typeof(new)})
+			new(state_ref[])
+		else
+			new
+		end
+		
+		state_ref[] = new_value
+		rerun_cell_fn()
+	end
+	(state_ref[], set_state)
+end
+
+# ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
+"""
+	@use_memo(deps::Vector{Any}) do
+		# Expensive computation/loading
+	end
+
+Does a computation only when the deps array has changed.
+This is useful for heavy computations as well as resource fetches like file reading or fetching from the network.
+
+```julia
+# Only read a file once
+@use_memo([filename]) do
+	read(filename)
+end
+```
+
+```julia
+@use_memo([a, b]) do
+	a + b # But they're like really big numbers
+end
+```
+"""
+@hook macro use_memo(f, deps)
+	ref = @use_ref(nothing)
+	if @use_did_deps_change($(esc(deps)))
+		ref[] = $(esc(f))()
+	end
+	ref[]
 end
 
 # ╔═╡ 0f632b57-ea01-482b-b93e-d69f962a6d92
@@ -403,8 +430,9 @@ end
 # 49cb409b-e564-47aa-9dae-9bc5bffa991d
 # eval circumvents Pluto-ness
 eval(quote
-	@use_is_pluto_cell() // false
-	wrong_use_of_use_is_pluto_cell() // true
+	@use_is_pluto_cell() # false
+	wrong_use_of_use_is_pluto_cell() # true - because the function it calls 
+	                                 #        IS DEFINED in a Pluto cells
 end)
 ```
 """
@@ -628,38 +656,36 @@ It can be combined with `@use_state` for background updating of values.
 
 I'm still wondering if it is best to have `deps=nothing` as a default, or have `deps=[]` or maybe even require deps explicitly so people are forced to know what they are doing.
 """
-macro use_task(f, deps)
-	quote
-		@use_deps($(esc(deps))) do
-			_, refresh = @use_state(nothing)
-			task_ref = @use_ref(Task($(esc(f))))
+@hook macro use_task(f, deps)
+	@use_deps(deps) do
+		_, refresh = @use_state(nothing)
+		task_ref = @use_ref(Task(f))
 	
-			@use_effect([]) do
-				task = task_ref[]
-
-				schedule(Task() do
+		@use_effect([]) do
+			task = task_ref[]
+	
+			schedule(Task() do
+				try
+					fetch(task)
+				finally
+					refresh(nothing)
+				end
+			end)
+	
+			schedule(task)
+	
+			return function()
+				if !istaskdone(task)
 					try
-						fetch(task)
-					finally
-						refresh(nothing)
-					end
-				end)
-		
-				schedule(task)
-		
-				return function()
-					if !istaskdone(task)
-						try
-							Base.schedule(task, InterruptException(), error=true)
-						catch error
-							nothing
-						end
+						Base.schedule(task, InterruptException(), error=true)
+					catch error
+						nothing
 					end
 				end
 			end
-	
-			task_ref[]
 		end
+	
+		task_ref[]
 	end
 end
 
@@ -679,33 +705,29 @@ demo_task_failed = @skip_as_script istaskfailed(demo_task_that_dies_after_a_seco
 md"### `@use_file(filename)`"
 
 # ╔═╡ e240b167-560c-4dd7-9801-30467d8758be
-macro use_file_change(filename)
-	quote
-		filename = $(esc(filename))
-		
-		@use_deps([filename]) do
-			last_update_time, set_last_update_time = @use_state(time())
+@hook macro use_file_change(filename)
+	filename = $(esc(filename))
 	
-			@use_task([]) do
-				while true
-					watch_file(filename)
-					set_file_content(read(filename, String))
-				end
+	@use_deps([filename]) do
+		last_update_time, set_last_update_time = @use_state(time())
+
+		@use_task([]) do
+			while true
+				watch_file(filename)
+				set_file_content(read(filename, String))
 			end
-		
-			last_update_time
 		end
+	
+		last_update_time
 	end
 end
 
 # ╔═╡ 461231e8-4958-46b9-88cb-538f9151a4b0
-macro use_file(filename)
-	quote
-		filename = $(esc(filename))
-		update_time = @use_file_change(filename)
-		@use_memo([update_time]) do
-			read(filename, String)
-		end
+@hook macro use_file(filename)
+	filename = $(filename)
+	update_time = @use_file_change(filename)
+	@use_memo([update_time]) do
+		read(filename, String)
 	end
 end
 
@@ -771,21 +793,20 @@ function ingredients(path::String)
 end
 
 # ╔═╡ d84f47ba-7c18-4d6c-952c-c9a5748a51f8
-macro ingredients(filename)
-	quote
-		filename = $(esc(filename))
-		@use_deps([filename]) do
-			mod, set_mod = @use_state(ingredients(filename))
-	
-			@use_task([]) do
-				while true
-					watch_file(filename)
-					set_mod(ingredients(filename))
-				end
+@hook macro use_include(filename)
+	filename = $(filename)
+
+	@use_deps([filename]) do		
+		mod, set_mod = @use_state(ingredients(filename))
+
+		@use_task([]) do
+			while true
+				watch_file(filename)
+				set_mod(ingredients(filename))
 			end
-	
-			mod
 		end
+
+		mod
 	end
 end
 
@@ -812,7 +833,7 @@ end
 @skip_as_script if ismissing(demo_ingredients_file) || demo_ingredients_file == ""
 	Markdown.parse("Enter a file name!")
 elseif isfile(demo_ingredients_file)
-	demo_notebook = @ingredients(demo_ingredients_file)
+	demo_notebook = @use_include(demo_ingredients_file)
 else
 	Markdown.parse("File `$demo_ingredients_file` doesn't exist D:")
 end
@@ -854,12 +875,13 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═49cb409b-e564-47aa-9dae-9bc5bffa991d
 # ╠═3f632c14-5f25-4426-8bff-fd315db55db5
 # ╠═92cfc989-5862-4314-ae1b-9cbfc4b42b40
-# ╟─c82c8aa9-46a9-4110-88af-8638625222e3
-# ╟─1df0a586-3692-11ec-0171-0b48a4a1c4bd
-# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╠═1df0a586-3692-11ec-0171-0b48a4a1c4bd
 # ╟─89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
+# ╟─c82c8aa9-46a9-4110-88af-8638625222e3
 # ╟─c461f6da-a252-4cb4-b510-a4df5ab85065
+# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╟─7958df12-5f3b-4c36-9e67-7808cf19fd6a
 # ╟─0f632b57-ea01-482b-b93e-d69f962a6d92
 # ╟─d9d14e60-0c91-4eec-ba28-82cf1ebc115f
 # ╟─cce13aec-7cf0-450c-bc93-bcc4e2a70dfe
@@ -875,8 +897,8 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─b36e130e-578b-42cb-8e3a-763f6b97108d
 # ╠═ff97bcce-1d29-469e-a4be-5dc902676057
 # ╟─78d28d07-5912-4306-ad95-ad245797889f
-# ╟─1b8d6be4-5ba4-42a8-9276-9ef687a8a7a3
-# ╟─f168c077-59c7-413b-a0ac-c0fd72781b72
+# ╠═1b8d6be4-5ba4-42a8-9276-9ef687a8a7a3
+# ╠═f168c077-59c7-413b-a0ac-c0fd72781b72
 # ╟─9ec6b9c5-6bc1-4033-ab93-072f783184e9
 # ╟─fd653af3-be53-4ddd-b69d-3967ef6d588a
 # ╟─b25ccaf1-cf46-4eea-a4d9-16c68cf56fad
@@ -890,7 +912,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╠═80269b83-bab9-4673-81d5-e75d68139969
 # ╟─56f2ff19-c6e8-4858-8e6a-3b790fae7ecb
 # ╠═b0350bd0-5dd2-4c73-b301-f076123144c2
-# ╠═e240b167-560c-4dd7-9801-30467d8758be
+# ╟─e240b167-560c-4dd7-9801-30467d8758be
 # ╠═461231e8-4958-46b9-88cb-538f9151a4b0
 # ╟─8447721c-a27a-4d42-95c5-dbbc59575397
 # ╠═bfd99997-9849-482a-a7db-2d38ebb7c305
@@ -898,7 +920,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─9af74baf-6571-4a0c-b0c0-989472f18f7a
 # ╟─257737f3-e3fe-45c3-b638-928b67aea027
 # ╟─480dd46c-cc31-46b5-bc2d-2e1680d5c682
-# ╠═d84f47ba-7c18-4d6c-952c-c9a5748a51f8
+# ╟─d84f47ba-7c18-4d6c-952c-c9a5748a51f8
 # ╟─074d4029-47c4-47e9-8861-4f5885bb3cc1
 # ╟─562f9484-fbb6-4cd6-b83c-ab7944567e2f
 # ╠═ff764d7d-2c07-44bd-a675-89c9e2b00151

@@ -20,6 +20,97 @@ using UUIDs
 # ╔═╡ b0350bd0-5dd2-4c73-b301-f076123144c2
 using FileWatching
 
+# ╔═╡ 1f92f086-981e-45af-8171-f04708ddbe09
+md"""
+## `use_context`
+"""
+
+# ╔═╡ dcaeba01-0f29-4ede-8c5b-7ca9b5c63af8
+function _create_context_from_varname(varname::Symbol, default::Any)
+	mod = Module(gensym("PlutoHooks Context Module"))
+	
+	Core.eval(mod, quote
+		varname = $(QuoteNode(varname))
+		default = $(default)
+		
+		macro varname()
+			esc(varname)
+		end
+		
+		macro Consumer()
+			quote
+				$(esc(_varname))
+			end
+		end
+		
+		macro Provider(fn, value)
+			quote
+				let
+					$(esc(_varname)) = $(esc(value))
+					$(esc(fn))()
+				end
+			end
+		end
+	end)
+
+	mod
+end
+
+# ╔═╡ 5ac8b6b8-7e70-414f-86d7-2817614ef41f
+function create_context(default)
+	varname = gensym("PlutoHooks Context Variable")
+	_create_context_from_varname(varname, default)
+end
+
+# ╔═╡ 7211df4a-1676-49f2-9d2e-f694a609f501
+macro use_context(context_var::Symbol)
+	varname_macrocall = esc(:($(context_var).@varname))
+
+	quote
+		context_module = $(esc(context_var))
+
+		if $(Expr(:islocal, varname_macrocall))
+			$(varname_macrocall)
+		else
+			context_module.default
+		end
+	end
+end
+
+# ╔═╡ 6dbbec7b-2b7e-4bc1-9f10-64a2be624648
+macro use_with_context(fn, pairs...)
+	assignments = map(pairs) do pair
+		@assert Meta.isexpr(pair, :call, 3)
+		@assert pair.args[begin] == :(=>)
+		@assert pair.args[begin+1] isa Symbol
+		
+		context_var = pair.args[begin+1]
+		new_value = pair.args[begin+2]
+
+		varname_macrocall = esc(:($(context_var).@varname))
+		
+		:($(varname_macrocall) = $(esc(new_value)))
+	end
+
+	quote
+		let
+			$(assignments...)
+			$(esc(fn))()
+		end
+	end
+end
+
+# ╔═╡ 9b7a0a00-7871-43a2-93de-25b5b5863f2d
+# is_running_in_pluto_process() ? PlutoContext : create_context(nothing)
+
+# ╔═╡ 05f17b43-e5f6-4316-85c9-c60ab4d74c0d
+const PlutoContext = create_context(nothing)
+
+# ╔═╡ ebb15a16-55bc-4d4d-9392-9667c24b119c
+@use_with_context(PlutoContext => 45) do
+	@use_context(PlutoContext)
+end
+
 # ╔═╡ 729ae3bb-79c2-4fcd-8645-7e0071365537
 md"""
 # PlutoHooks.jl
@@ -329,7 +420,10 @@ macro use_deps(fn_expr, deps)
 			$cell_id_ref[] = uuid4()
 		end
 
-		with_cell_id($(esc(fn_expr)), $cell_id_ref[])
+		previous_pluto_context = @use_context(PlutoContext)
+		@use_with_context(PlutoContext => Dict(:cell_id => $cell_id_ref[])) do
+			$(esc(fn_expr))
+		end
 	end
 end
 
@@ -368,7 +462,14 @@ Outside a Pluto cell it will throw an error.
 """
 macro give_me_the_pluto_cell_id()
 	if is_running_in_pluto_process()
-		:(something(overwritten_cell_id[], dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID()))))
+		quote
+			pluto_context = @use_context($(PlutoContext))
+			if pluto_context != nothing
+				pluto_context[:cell_id]
+			else
+				dont_be_pluto_special_value($(Main.PlutoRunner.GiveMeCellID()))
+			end
+		end
 	else
 		:(throw(NotRunningInPlutoCellException()))
 	end	
@@ -439,20 +540,6 @@ macro skip_as_script(expr)
 	end
 end
 
-# ╔═╡ 71963fa5-82f0-4c8d-9368-0d6ba317f59e
-# Notice that even though we run it in this cell's module,
-# that doesn't count as "being in Pluto" enough.
-@skip_as_script let
-	is_pluto_cell = eval(quote
-		@use_is_pluto_cell()
-	end)
-	if is_pluto_cell
-		error("❌ eval() thinks it is a Pluto cell! What!!")
-	else
-		md"✅ Nice, eval() is indeed not the Pluto cell"
-	end
-end
-
 # ╔═╡ ec74d9b7-b2ff-4758-a305-c3f30509a786
 """
 	@only_as_script expr
@@ -481,6 +568,20 @@ export @use_is_pluto_cell, @skip_as_script, @only_as_script
 		md"✅ Nice, we are indeed running in Pluto"
 	else
 		error("❌ Uhhhhhh")
+	end
+end
+
+# ╔═╡ 71963fa5-82f0-4c8d-9368-0d6ba317f59e
+# Notice that even though we run it in this cell's module,
+# that doesn't count as "being in Pluto" enough.
+@skip_as_script let
+	is_pluto_cell = eval(quote
+		@use_is_pluto_cell()
+	end)
+	if is_pluto_cell
+		error("❌ eval() thinks it is a Pluto cell! What!!")
+	else
+		md"✅ Nice, eval() is indeed not the Pluto cell"
 	end
 end
 
@@ -681,9 +782,9 @@ end
 md"#### `@use_task` demo"
 
 # ╔═╡ 59c673cf-3915-453a-a196-a6cd265398f0
-demo_task_that_dies_after_a_second = @skip_as_script @use_task([]) do
+@skip_as_script demo_task_that_dies_after_a_second = @use_task([]) do
 	sleep(1)
-	error("hi")
+	error("hi", g)
 end
 
 # ╔═╡ 80269b83-bab9-4673-81d5-e75d68139969
@@ -747,6 +848,11 @@ elseif isfile(demo_text_file)
 	demo_text_file_content = @use_file(demo_text_file)
 else
 	Markdown.parse("File `$demo_text_file` doesn't exist D:")
+end
+
+# ╔═╡ ce2cf75e-06cf-415f-aa93-ea9de63a479d
+module RecursiveMacroExpand
+	include(expanduser("~/Projects/Notebooks/RecursiveMacroExpand.jl"))
 end
 
 # ╔═╡ 9af74baf-6571-4a0c-b0c0-989472f18f7a
@@ -822,15 +928,6 @@ and the resulting module will update every time you change the file.
 	"""
 end
 
-# ╔═╡ ff764d7d-2c07-44bd-a675-89c9e2b00151
-@skip_as_script if ismissing(demo_ingredients_file) || demo_ingredients_file == ""
-	Markdown.parse("Enter a file name!")
-elseif isfile(demo_ingredients_file)
-	demo_notebook = @ingredients(demo_ingredients_file)
-else
-	Markdown.parse("File `$demo_ingredients_file` doesn't exist D:")
-end
-
 # ╔═╡ 19b0c6f9-999b-4804-b55b-b92dfa408912
 demo_names_from_notebook = @skip_as_script names(demo_notebook, all=true)
 
@@ -864,16 +961,24 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 """
 
 # ╔═╡ Cell order:
+# ╟─1f92f086-981e-45af-8171-f04708ddbe09
+# ╟─dcaeba01-0f29-4ede-8c5b-7ca9b5c63af8
+# ╟─5ac8b6b8-7e70-414f-86d7-2817614ef41f
+# ╟─7211df4a-1676-49f2-9d2e-f694a609f501
+# ╟─6dbbec7b-2b7e-4bc1-9f10-64a2be624648
+# ╠═9b7a0a00-7871-43a2-93de-25b5b5863f2d
+# ╠═05f17b43-e5f6-4316-85c9-c60ab4d74c0d
+# ╠═ebb15a16-55bc-4d4d-9392-9667c24b119c
 # ╟─729ae3bb-79c2-4fcd-8645-7e0071365537
 # ╠═49cb409b-e564-47aa-9dae-9bc5bffa991d
 # ╠═3f632c14-5f25-4426-8bff-fd315db55db5
 # ╠═92cfc989-5862-4314-ae1b-9cbfc4b42b40
 # ╟─c82c8aa9-46a9-4110-88af-8638625222e3
 # ╟─1df0a586-3692-11ec-0171-0b48a4a1c4bd
-# ╟─cd048a16-37f5-455e-8b6a-c098d5f83b96
+# ╠═cd048a16-37f5-455e-8b6a-c098d5f83b96
 # ╟─89b3f807-2e24-4454-8f4c-b2a98aee571e
 # ╟─bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
-# ╟─c461f6da-a252-4cb4-b510-a4df5ab85065
+# ╠═c461f6da-a252-4cb4-b510-a4df5ab85065
 # ╟─0f632b57-ea01-482b-b93e-d69f962a6d92
 # ╟─d9d14e60-0c91-4eec-ba28-82cf1ebc115f
 # ╟─cce13aec-7cf0-450c-bc93-bcc4e2a70dfe
@@ -884,7 +989,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─71963fa5-82f0-4c8d-9368-0d6ba317f59e
 # ╟─118991d7-f470-4775-ac44-4638f4989d58
 # ╟─405fb702-cf4a-4d34-b8ed-d3258a61256b
-# ╟─39aa6082-40ca-40c3-a2c0-4b6221edda32
+# ╠═39aa6082-40ca-40c3-a2c0-4b6221edda32
 # ╟─3d2516f8-569e-40e4-b1dd-9f024f9266e4
 # ╟─cf55239c-526b-48fe-933e-9e8d56161fd6
 # ╟─86a2f051-c554-4a1c-baee-8d01653c15be
@@ -911,13 +1016,13 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─8447721c-a27a-4d42-95c5-dbbc59575397
 # ╠═bfd99997-9849-482a-a7db-2d38ebb7c305
 # ╠═ab50b532-3d78-43cb-975a-772c87d7fa79
+# ╠═ce2cf75e-06cf-415f-aa93-ea9de63a479d
 # ╟─9af74baf-6571-4a0c-b0c0-989472f18f7a
 # ╟─257737f3-e3fe-45c3-b638-928b67aea027
 # ╟─480dd46c-cc31-46b5-bc2d-2e1680d5c682
 # ╠═d84f47ba-7c18-4d6c-952c-c9a5748a51f8
 # ╟─074d4029-47c4-47e9-8861-4f5885bb3cc1
 # ╟─562f9484-fbb6-4cd6-b83c-ab7944567e2f
-# ╠═ff764d7d-2c07-44bd-a675-89c9e2b00151
 # ╠═19b0c6f9-999b-4804-b55b-b92dfa408912
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

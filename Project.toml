@@ -1,7 +1,7 @@
 name = "PlutoHooks"
 uuid = "0ff47ea0-7a50-410d-8455-4348d5de0774"
 authors = ["Paul Berg <paul@plutojl.org>", "Michiel Dral <m.c.dral@gmail.com>"]
-version = "0.0.2"
+version = "0.0.3"
 
 [deps]
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"

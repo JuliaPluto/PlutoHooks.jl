@@ -1,10 +1,5 @@
 using Test
 
-# TODO: use a fixed version of Pluto, once 0.17.1 + x has been released
-#       This is currently testing against Pluto#main
-import Pkg
-Pkg.add(url="https://github.com/fonsp/Pluto.jl", rev="main")
-
 import Pluto
 import Pluto: PlutoRunner, Notebook, WorkspaceManager, Cell, ServerSession, ClientSession, update_run!
 

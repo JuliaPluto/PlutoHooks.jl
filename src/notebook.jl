@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.17.1
+# v0.17.3
 
 using Markdown
 using InteractiveUtils
@@ -17,9 +17,6 @@ end
 # ╔═╡ 49cb409b-e564-47aa-9dae-9bc5bffa991d
 using UUIDs
 
-# ╔═╡ b0350bd0-5dd2-4c73-b301-f076123144c2
-using FileWatching
-
 # ╔═╡ 729ae3bb-79c2-4fcd-8645-7e0071365537
 md"""
 # PlutoHooks.jl
@@ -31,7 +28,7 @@ There is a lot you can do with this, but some examples:
 - Watch a file and reload the content when it changes.
 - Do a computation on separate thread while the rest of notebook continue running.
 
-For now you need use the [Pluto#main](https://github.com/fonsp/Pluto.jl), but this it will be released very soon.
+You need to use Pluto version >= 0.17.2.
 """
 
 # ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
@@ -624,70 +621,11 @@ end
 md"### `@use_task`"
 
 # ╔═╡ 9ec99592-955a-41bd-935a-b34f37bb5977
-"""
-Wraps a `Task` with the current cell. When the cell state is reset, sends an `InterruptException` to the underlying `Task`.
-```julia
-@use_task([]) do
-	while true
-		sleep(2.)
-		@info "this is updating"
-	end
-end
-```
-It can be combined with `@use_state` for background updating of values.
-
-I'm still wondering if it is best to have `deps=nothing` as a default, or have `deps=[]` or maybe even require deps explicitly so people are forced to know what they are doing.
-"""
 macro use_task(f, deps)
 	quote
-		try
-			@use_deps($(esc(deps))) do
-				_, refresh = @use_state(nothing)
-				task_ref = @use_ref(Task($(esc(f))))
-		
-				@use_effect([]) do
-					task = task_ref[]
-	
-					schedule(Task() do
-						try
-							fetch(task)
-						finally
-							refresh(nothing)
-						end
-					end)
-			
-					schedule(task)
-			
-					return function()
-						if !istaskdone(task)
-							try
-								Base.schedule(task, InterruptException(), error=true)
-							catch error
-								nothing
-							end
-						end
-					end
-				end
-		
-				task_ref[]
-			end
-		catch e
-			@warn "Got an error in use_task" e
-		end
+		error("@use_task was moved to PlutoLinks.jl")
 	end
 end
-
-# ╔═╡ f8059bcb-a5bb-4c3d-a438-652b72a5be52
-md"#### `@use_task` demo"
-
-# ╔═╡ 59c673cf-3915-453a-a196-a6cd265398f0
-demo_task_that_dies_after_a_second = @skip_as_script @use_task([]) do
-	sleep(1)
-	error("hi")
-end
-
-# ╔═╡ 80269b83-bab9-4673-81d5-e75d68139969
-demo_task_failed = @skip_as_script istaskfailed(demo_task_that_dies_after_a_second)
 
 # ╔═╡ 56f2ff19-c6e8-4858-8e6a-3b790fae7ecb
 md"### `@use_file(filename)`"
@@ -695,149 +633,30 @@ md"### `@use_file(filename)`"
 # ╔═╡ e240b167-560c-4dd7-9801-30467d8758be
 macro use_file_change(filename)
 	quote
-		filename = $(esc(filename))
-		
-		@use_deps([filename]) do
-			last_update_time, set_last_update_time = @use_state(time())
-	
-			@use_task([]) do
-				while true
-					watch_file(filename)
-					set_file_content(read(filename, String))
-				end
-			end
-		
-			last_update_time
-		end
+		error("@use_file_change was moved to PlutoLinks.jl")
 	end
 end
 
 # ╔═╡ 461231e8-4958-46b9-88cb-538f9151a4b0
 macro use_file(filename)
 	quote
-		filename = $(esc(filename))
-		update_time = @use_file_change(filename)
-		@use_memo([update_time]) do
-			read(filename, String)
-		end
+		error("@use_file was moved to PlutoLinks.jl")
 	end
-end
-
-# ╔═╡ 8447721c-a27a-4d42-95c5-dbbc59575397
-md"""
-#### `@use_file` demo
-
-"""
-
-# ╔═╡ bfd99997-9849-482a-a7db-2d38ebb7c305
-@skip_as_script begin
-	local input = @bind demo_text_file html"""
-		<input type=text placeholder="data.csv" />
-	"""
-	md"""
-	Enter text file to read:
-	$(input)
-	"""
-end
-
-# ╔═╡ ab50b532-3d78-43cb-975a-772c87d7fa79
-@skip_as_script if ismissing(demo_text_file) || demo_text_file == ""
-	Markdown.parse("Enter a file name!")
-elseif isfile(demo_text_file)
-	demo_text_file_content = @use_file(demo_text_file)
-else
-	Markdown.parse("File `$demo_text_file` doesn't exist D:")
 end
 
 # ╔═╡ 9af74baf-6571-4a0c-b0c0-989472f18f7a
 md"### `@ingredients(julia_file_path)`"
 
-# ╔═╡ 257737f3-e3fe-45c3-b638-928b67aea027
-function pluto_file_name_to_module_name(path::String)
-	file_name = basename(path)
-	if endswith(file_name, ".pluto.jl")
-		file_name[begin:end-length(".pluto.jl")]
-	elseif endswith(file_name, ".jl")
-		file_name[begin:end-length(".jl")]
-	else
-		file_name
-	end
-end
-
-# ╔═╡ 480dd46c-cc31-46b5-bc2d-2e1680d5c682
-function ingredients(path::String)
-	if !isfile(path)
-		error("File \"$path\" does not exist!")
-	end
-	
-	name = Symbol(pluto_file_name_to_module_name(path))
-	
-	# This is from the Julia source code (evalfile in base/loading.jl)
-	# but with the modification that it returns the module instead of the last object
-	m = Module(name)
-	Core.eval(m,
-		Expr(:toplevel,
-			:(eval(x) = $(Expr(:core, :eval))($name, x)),
-			:(include(x) = $(Expr(:top, :include))($name, x)),
-			:(include(mapexpr::Function, x) = $(Expr(:top, :include))(mapexpr, $name, x)),
-			:(include($path))))
-	m
-end
-
 # ╔═╡ d84f47ba-7c18-4d6c-952c-c9a5748a51f8
 macro ingredients(filename)
 	quote
-		filename = $(esc(filename))
-		@use_deps([filename]) do
-			mod, set_mod = @use_state(ingredients(filename))
-	
-			@use_task([]) do
-				while true
-					watch_file(filename)
-					set_mod(ingredients(filename))
-				end
-			end
-	
-			mod
-		end
+		error("@ingredients was moved to PlutoLinks.jl")
 	end
 end
-
-# ╔═╡ 074d4029-47c4-47e9-8861-4f5885bb3cc1
-md"""
-#### Ingredients Demo
-
-Enter a filename relative to where this notebook is running (could even be this file)
-and the resulting module will update every time you change the file.
-"""
-
-# ╔═╡ 562f9484-fbb6-4cd6-b83c-ab7944567e2f
-@skip_as_script begin
-	local input = @bind demo_ingredients_file html"""
-		<input type=text placeholder="Fun Experiment.jl" />
-	"""
-	md"""
-	Enter julia file to import:
-	$(input)
-	"""
-end
-
-# ╔═╡ ff764d7d-2c07-44bd-a675-89c9e2b00151
-@skip_as_script if ismissing(demo_ingredients_file) || demo_ingredients_file == ""
-	Markdown.parse("Enter a file name!")
-elseif isfile(demo_ingredients_file)
-	demo_notebook = @ingredients(demo_ingredients_file)
-else
-	Markdown.parse("File `$demo_ingredients_file` doesn't exist D:")
-end
-
-# ╔═╡ 19b0c6f9-999b-4804-b55b-b92dfa408912
-demo_names_from_notebook = @skip_as_script names(demo_notebook, all=true)
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
-FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 """
 
@@ -845,11 +664,8 @@ UUIDs = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 PLUTO_MANIFEST_TOML_CONTENTS = """
 # This file is machine-generated - editing it directly is not advised
 
-[[FileWatching]]
-uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
-
 [[Random]]
-deps = ["Serialization"]
+deps = ["SHA", "Serialization"]
 uuid = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 
 [[SHA]]
@@ -901,23 +717,10 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─90f051be-4384-4383-9a56-2aa584687dc3
 # ╟─c8c560bf-3ef6-492f-933e-21c898fb2db6
 # ╠═9ec99592-955a-41bd-935a-b34f37bb5977
-# ╟─f8059bcb-a5bb-4c3d-a438-652b72a5be52
-# ╠═59c673cf-3915-453a-a196-a6cd265398f0
-# ╠═80269b83-bab9-4673-81d5-e75d68139969
 # ╟─56f2ff19-c6e8-4858-8e6a-3b790fae7ecb
-# ╠═b0350bd0-5dd2-4c73-b301-f076123144c2
 # ╠═e240b167-560c-4dd7-9801-30467d8758be
 # ╠═461231e8-4958-46b9-88cb-538f9151a4b0
-# ╟─8447721c-a27a-4d42-95c5-dbbc59575397
-# ╠═bfd99997-9849-482a-a7db-2d38ebb7c305
-# ╠═ab50b532-3d78-43cb-975a-772c87d7fa79
 # ╟─9af74baf-6571-4a0c-b0c0-989472f18f7a
-# ╟─257737f3-e3fe-45c3-b638-928b67aea027
-# ╟─480dd46c-cc31-46b5-bc2d-2e1680d5c682
 # ╠═d84f47ba-7c18-4d6c-952c-c9a5748a51f8
-# ╟─074d4029-47c4-47e9-8861-4f5885bb3cc1
-# ╟─562f9484-fbb6-4cd6-b83c-ab7944567e2f
-# ╠═ff764d7d-2c07-44bd-a675-89c9e2b00151
-# ╠═19b0c6f9-999b-4804-b55b-b92dfa408912
 # ╟─00000000-0000-0000-0000-000000000001
 # ╟─00000000-0000-0000-0000-000000000002

@@ -1,9 +1,42 @@
 using Test
 
-import Pluto
-import Pluto: PlutoRunner, Notebook, WorkspaceManager, Cell, ServerSession, ClientSession, update_run!
+using PlutoHooks
 
 include("./helpers.jl")
+
+@testset "Without Pluto" begin
+    using PlutoHooks
+
+    ref = @use_ref(1)
+    @test ref[] == 1
+
+    x = 2
+    @use_effect([x]) do
+        ref[] = x
+        () -> (ref[] = 9999)
+    end
+    @test ref[] == 2
+    # cleanup never called without pluto ✓
+    @test ref[] != 9999
+
+
+    state, setstate = @use_state(5)
+    @test state == 5
+    @test_nowarn setstate(99)
+    # setstate does nothing without pluto ✓
+    @test state == 5
+
+
+    y = 7
+    result = @use_deps([y]) do
+        ref2 = @use_ref(1)
+        ref2[] = y
+    end
+    @test result == 7
+end
+
+import Pluto
+import Pluto: PlutoRunner, Notebook, WorkspaceManager, Cell, ServerSession, ClientSession, update_run!
 
 🍭 = ServerSession()
 🍭.options.evaluation.workspace_use_distributed = false
@@ -226,3 +259,6 @@ end
     update_run!(🍭, notebook, cell(2))
     @test cell(3).output.body == "2"
 end
+
+
+

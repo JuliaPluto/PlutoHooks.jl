@@ -389,9 +389,6 @@ These are, I hope, the only parts that need to explicitly reference PlutoRunner.
 Each of these inserts a reference to a special PlutoRunner object into the resulting expression, and that special object will be caught by PlutoRunner while evaluating the cell, and replaced with the actual value.
 
 It seems a bit over-engineered, and I guess it is, BUT, this makes it possible to have a very strict sense of what cell is actually running what function. Also it allows other macros (specifically [`@use_deps`](@ref)) to insert it's own values instead of Plutos, thus kinda creating a cell-in-a-cell 😏
-
-Not yet sure how these should react when they are called outside of Pluto...
-So... Uhhh..., they throw an error now!
 """
 
 # ╔═╡ 405fb702-cf4a-4d34-b8ed-d3258a61256b

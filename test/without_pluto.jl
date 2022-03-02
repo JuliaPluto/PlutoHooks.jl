@@ -20,11 +20,16 @@
     # setstate does nothing without pluto ✓
     @test state == 5
 
-
     y = 7
     result = @use_deps([y]) do
         ref2 = @use_ref(1)
         ref2[] = y
     end
     @test result == 7
+
+    result = @use_memo([]) do
+      result * y
+    end
+
+    @test result == 49
 end

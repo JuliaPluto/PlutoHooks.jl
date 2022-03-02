@@ -107,7 +107,12 @@ This is useful to keep state around between runs.
 """
 macro use_ref(initial_value=nothing)
 	if !is_inside_pluto(__module__)
-		return :(Ref($(esc(initial_value))))
+        ref = Ref{Any}()
+		return quote
+            ref = $(ref)
+            ref[] = $(esc(initial_value))
+            ref
+        end
 	end
 
 	ref_ref = Ref(Ref{Any}())
@@ -327,7 +332,7 @@ macro use_did_deps_change(deps)
 	if !is_inside_pluto(__module__)
 		return quote
 			$(esc(deps))
-			false
+			true # Simulates the first run 
 		end
 	end
 	

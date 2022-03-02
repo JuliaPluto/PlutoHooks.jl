@@ -1,5 +1,5 @@
 ### A Pluto.jl notebook ###
-# v0.17.3
+# v0.18.1
 
 using Markdown
 using InteractiveUtils
@@ -31,6 +31,72 @@ There is a lot you can do with this, but some examples:
 You need to use Pluto version >= 0.17.2.
 """
 
+# ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
+"""
+	@use_memo(deps::Vector{Any}) do
+		# Expensive computation/loading
+	end
+
+Does a computation only when the deps array has changed.
+This is useful for heavy computations as well as resource fetches like file reading or fetching from the network.
+
+```julia
+# Only read a file once
+@use_memo([filename]) do
+	read(filename)
+end
+```
+
+```julia
+@use_memo([a, b]) do
+	a + b # But they're like really big numbers
+end
+```
+"""
+macro use_memo(f, deps)
+	quote
+		ref = @use_ref(nothing)
+		if @use_did_deps_change($(esc(deps)))
+			ref[] = $(esc(f))()
+		end
+		ref[]
+	end
+end
+
+# ╔═╡ 0f632b57-ea01-482b-b93e-d69f962a6d92
+md"""
+## Not really hooks but internally very hook-ish
+
+These are all for making sure you have some level of Pluto-ness active. These are made to work outside of Pluto as well, but obviously give you the opposite results :P
+"""
+
+# ╔═╡ 8c2e9cad-eb63-4af5-8b52-629e8d3439bd
+"""
+	is_running_in_pluto_process()
+
+This doesn't mean we're in a Pluto cell, e.g. can use @bind and hooks goodies.
+It only means PlutoRunner is available (and at a version that technically supports hooks)
+"""
+function is_running_in_pluto_process()
+	isdefined(Main, :PlutoRunner) &&
+	# Also making sure my favorite goodies are present
+	isdefined(Main.PlutoRunner, :GiveMeCellID) &&
+	isdefined(Main.PlutoRunner, :GiveMeRerunCellFunction) &&
+	isdefined(Main.PlutoRunner, :GiveMeRegisterCleanupFunction)
+end
+
+# ╔═╡ df0645b5-094a-45b9-b72a-ab7ef9901fa1
+"""
+	is_inside_pluto(mod::Module)
+
+This can be useful to implement the behavior for when the hook is called outside Pluto but in the case where Pluto **can** be loaded.
+"""
+function is_inside_pluto(mod::Module)
+	# Note: this could be moved to AbstractPlutoDingejtes
+	startswith(string(nameof(mod)), "workspace#") &&
+		isdefined(mod, Symbol("@bind"))
+end
+
 # ╔═╡ c82c8aa9-46a9-4110-88af-8638625222e3
 """
 	@use_ref(initial_value::Any)::Ref{Any}
@@ -40,6 +106,15 @@ Creates a Ref that is stable over multiple **implicit** runs of the cell. Implic
 This is useful to keep state around between runs.
 """
 macro use_ref(initial_value=nothing)
+	if !is_inside_pluto(__module__)
+        ref = Ref{Any}()
+		return quote
+            ref = $(ref)
+            ref[] = $(esc(initial_value))
+            ref
+        end
+	end
+
 	ref_ref = Ref(Ref{Any}())
 
 	quote
@@ -103,6 +178,12 @@ end
 ```
 """
 macro use_state(initial_value)
+	if !is_inside_pluto(__module__)
+		return quote
+			($(esc(initial_value)), x -> nothing)
+		end
+	end
+	
 	quote
 		rerun_cell_fn = @give_me_rerun_cell_function()
 		state_ref = @use_ref($(esc(initial_value)))
@@ -128,6 +209,38 @@ macro use_state(initial_value)
 			rerun_cell_fn()
 		end
 		(state_ref[], set_state)
+	end
+end
+
+# ╔═╡ cd048a16-37f5-455e-8b6a-c098d5f83b96
+"""
+	@use_deps(deps::Vector) do
+		# ... others hooks ...
+	end
+
+Experimental function to wrap a bunch of macros in a fake cell that fully refreshes when the deps provided change. This is useful if you make a macro that wraps a bunch of Pluto Hooks, and you just want to refresh the whole block when something changes. This also clears [`@use_ref`](@ref)'s and [`@use_state`](@ref)'s, even though these don't even have a deps argument.
+
+Not entirely sure how much this is necessary (or if I'm missing something obvious that doesn't make it necessary).
+
+Also, this name does **not** spark joy.
+"""
+macro use_deps(fn_expr, deps)
+	if !is_inside_pluto(__module__)
+		return quote
+			$(esc(deps))
+
+			$(esc(fn_expr))()
+		end
+	end
+
+	cell_id_ref = Ref{UUID}(uuid4())
+
+	quote
+		if @use_did_deps_change($(esc(deps)))
+			$cell_id_ref[] = uuid4()
+		end
+
+		with_cell_id($(esc(fn_expr)), $cell_id_ref[])
 	end
 end
 
@@ -165,6 +278,13 @@ end
 ```
 """
 macro use_effect(f, deps)
+	if !is_inside_pluto(__module__)
+		return quote
+			$(esc(deps))
+			$(esc(f))()
+		end
+	end
+	
 	# For some reason the `cleanup_ref` using @use_ref or assigned outside the
 	# 	`register_cleanup_fn() do ... end` (and not interpolated directly into it)
 	# 	is `nothing` when the cleanup function actually ran...
@@ -192,37 +312,8 @@ macro use_effect(f, deps)
 	end
 end
 
-# ╔═╡ bc0e4219-a40b-46f5-adb2-f164d8a9bbdb
-"""
-	@use_memo(deps::Vector{Any}) do
-		# Expensive computation/loading
-	end
-
-Does a computation only when the deps array has changed.
-This is useful for heavy computations as well as resource fetches like file reading or fetching from the network.
-
-```julia
-# Only read a file once
-@use_memo([filename]) do
-	read(filename)
-end
-```
-
-```julia
-@use_memo([a, b]) do
-	a + b # But they're like really big numbers
-end
-```
-"""
-macro use_memo(f, deps)
-	quote
-		ref = @use_ref(nothing)
-		if @use_did_deps_change($(esc(deps)))
-			ref[] = $(esc(f))()
-		end
-		ref[]
-	end
-end
+# ╔═╡ 3f632c14-5f25-4426-8bff-fd315db55db5
+export @use_ref, @use_state, @use_memo, @use_effect, @use_deps
 
 # ╔═╡ c461f6da-a252-4cb4-b510-a4df5ab85065
 """
@@ -238,6 +329,13 @@ After that it will.
 3. `deps=[something_else...]` will return true when the deps are different than they were before
 """
 macro use_did_deps_change(deps)
+	if !is_inside_pluto(__module__)
+		return quote
+			$(esc(deps))
+			true # Simulates the first run 
+		end
+	end
+	
 	# Can't use @use_ref because this is used by @use_ref
 	initialized_ref = Ref(false)
 	last_deps_ref = Ref{Any}(nothing)
@@ -278,61 +376,6 @@ macro use_did_deps_change(deps)
 	end
 end
 
-# ╔═╡ 0f632b57-ea01-482b-b93e-d69f962a6d92
-md"""
-## Not really hooks but internally very hook-ish
-
-These are all for making sure you have some level of Pluto-ness active. These are made to work outside of Pluto as well, but obviously give you the opposite results :P
-"""
-
-# ╔═╡ 8c2e9cad-eb63-4af5-8b52-629e8d3439bd
-"""
-	is_running_in_pluto_process()
-
-This doesn't mean we're in a Pluto cell, e.g. can use @bind and hooks goodies.
-It only means PlutoRunner is available (and at a version that technically supports hooks)
-"""
-function is_running_in_pluto_process()
-	isdefined(Main, :PlutoRunner) &&
-	# Also making sure my favorite goodies are present
-	isdefined(Main.PlutoRunner, :GiveMeCellID) &&
-	isdefined(Main.PlutoRunner, :GiveMeRerunCellFunction) &&
-	isdefined(Main.PlutoRunner, :GiveMeRegisterCleanupFunction)
-end
-
-# ╔═╡ cd048a16-37f5-455e-8b6a-c098d5f83b96
-"""
-	@use_deps(deps::Vector) do
-		# ... others hooks ...
-	end
-
-Experimental function to wrap a bunch of macros in a fake cell that fully refreshes when the deps provided change. This is useful if you make a macro that wraps a bunch of Pluto Hooks, and you just want to refresh the whole block when something changes. This also clears [`@use_ref`](@ref)'s and [`@use_state`](@ref)'s, even though these don't even have a deps argument.
-
-Not entirely sure how much this is necessary (or if I'm missing something obvious that doesn't make it necessary).
-
-Also, this name does **not** spark joy.
-"""
-macro use_deps(fn_expr, deps)
-	# It's not pretty, but I don't want the macroexpansion to crash already.
-	# So I need this check before everything that uses `PlutoRunner`
-	if !is_running_in_pluto_process()
-		return :(throw(NotRunningInPlutoCellException()))
-	end
-
-	cell_id_ref = Ref{UUID}(uuid4())
-
-	quote
-		if @use_did_deps_change($(esc(deps)))
-			$cell_id_ref[] = uuid4()
-		end
-
-		with_cell_id($(esc(fn_expr)), $cell_id_ref[])
-	end
-end
-
-# ╔═╡ 3f632c14-5f25-4426-8bff-fd315db55db5
-export @use_ref, @use_state, @use_memo, @use_effect, @use_deps
-
 # ╔═╡ 84736507-7ea9-4b4b-9b70-b1e9b4b33cde
 md"""
 ### Until I get the PlutoTest PR out
@@ -346,9 +389,6 @@ These are, I hope, the only parts that need to explicitly reference PlutoRunner.
 Each of these inserts a reference to a special PlutoRunner object into the resulting expression, and that special object will be caught by PlutoRunner while evaluating the cell, and replaced with the actual value.
 
 It seems a bit over-engineered, and I guess it is, BUT, this makes it possible to have a very strict sense of what cell is actually running what function. Also it allows other macros (specifically [`@use_deps`](@ref)) to insert it's own values instead of Plutos, thus kinda creating a cell-in-a-cell 😏
-
-Not yet sure how these should react when they are called outside of Pluto...
-So... Uhhh..., they throw an error now!
 """
 
 # ╔═╡ 405fb702-cf4a-4d34-b8ed-d3258a61256b
@@ -695,6 +735,7 @@ uuid = "cf7118a7-6976-5b1a-9a39-7adc72f591a4"
 # ╟─cce13aec-7cf0-450c-bc93-bcc4e2a70dfe
 # ╟─ec74d9b7-b2ff-4758-a305-c3f30509a786
 # ╟─8c2e9cad-eb63-4af5-8b52-629e8d3439bd
+# ╟─df0645b5-094a-45b9-b72a-ab7ef9901fa1
 # ╟─84736507-7ea9-4b4b-9b70-b1e9b4b33cde
 # ╟─014d0172-3425-4429-b8d6-1d195bc60a66
 # ╟─71963fa5-82f0-4c8d-9368-0d6ba317f59e

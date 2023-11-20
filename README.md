@@ -1,3 +1,5 @@
+![tikz_networks-1](https://github.com/JuliaPluto/PlutoHooks.jl/assets/9824244/beea2ac6-405f-4725-9a16-d6f48c392266)
+
 # PlutoHooks.jl
 
 Get hooked on Pluto! Bring your notebook to life! This is an abstraction based on [React.js Hooks](https://reactjs.org/docs/hooks-intro.html) to implement "react-like" features in [Pluto.jl](https://plutojl.org).

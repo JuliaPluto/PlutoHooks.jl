@@ -16,6 +16,7 @@ function noerror(cell)
     errored = cell.errored
     if errored
         @show cell.output
+        @show cell.logs
     end
     !errored
 end
